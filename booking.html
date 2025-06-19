@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sarami Signature Gala 2025 - Book Tickets</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator/qrcode.js"></script>
+
+    <style>
+        /* Sarami Events Branding Styles */
+        :root {
+            --primary-color-sarami: #004d40;
+            --accent-color-sarami: #D4AF37;
+            --secondary-color-sarami: #00796b; 
+            --light-bg-sarami: #f8f9fa;
+            --white-color: #ffffff; 
+            --font-body-sarami: 'Poppins', sans-serif;
+            --error-color: #dc3545;
+            --success-color: #28a745;
+            --border-color: #D1D5DB;
+        }
+        body {
+            font-family: var(--font-body-sarami);
+            background-color: var(--light-bg-sarami);
+        }
+        .ticket {
+            border-left: 10px solid var(--accent-color-sarami);
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .loader {
+            border: 4px solid rgba(0,0,0,0.1);
+            border-top: 4px solid var(--accent-color-sarami); 
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-[var(--light-bg-sarami)]">
+
+    <header class="bg-[var(--primary-color-sarami)] text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                <a href="Index.html" class="flex items-center space-x-3">
+                    <img src="SARAMI_EVENTS_LOGO-removebg-preview.png" alt="Sarami Events Logo" class="h-12 w-12 rounded-full border-2 border-[var(--accent-color-sarami)]" 
+                         onerror="this.onerror=null; this.src='https://placehold.co/60x60/004d40/D4AF37?text=SE&font=poppins';">
+                    <span class="text-2xl font-bold tracking-tight text-[var(--accent-color-sarami)]">Sarami Tickets</span>
+                </a>
+                <nav class="hidden md:flex space-x-6">
+                    <a href="Index.html" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300 text-lg font-medium">Home</a>
+                    <a href="portfolio.html" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300 text-lg font-medium">Portfolio</a>
+                    <a href="contact.html" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300 text-lg font-medium">Contact</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="py-8 md:py-12">
+        <div class="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden md:flex">
+            
+            <div class="md:w-1/2 bg-cover bg-center p-8 text-white" style="background-image: url('https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=800&q=80');">
+                <div class="flex flex-col justify-between h-full bg-black bg-opacity-50 p-6 rounded-lg min-h-[400px]">
+                    <div>
+                        <h1 class="text-4xl font-bold tracking-tight">Sarami Signature Gala 2025</h1>
+                        <p class="mt-2 text-lg opacity-90">An evening of elegance, networking, and celebration.</p>
+                    </div>
+                    <div class="mt-8">
+                        <div class="flex items-center">
+                            <i class="fas fa-calendar-alt w-6 mr-2"></i>
+                            <span>December 12, 2025</span>
+                        </div>
+                        <div class="flex items-center mt-2">
+                            <i class="fas fa-map-marker-alt w-6 mr-2"></i>
+                            <span>Nairobi, Kenya</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="md:w-1/2 p-6 md:p-8">
+
+                <div id="booking-form">
+                    <h2 class="text-2xl font-bold text-[var(--primary-color-sarami)]">Book Your Tickets</h2>
+                    <form id="ticket-form" class="mt-6">
+                        <div>
+                            <label for="fullName" class="block text-sm font-medium text-[var(--primary-color-sarami)]">Full Name</label>
+                            <input type="text" id="fullName" name="fullName" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[var(--accent-color-sarami)] focus:border-[var(--accent-color-sarami)]">
+                        </div>
+                        <div class="mt-4">
+                            <label for="email" class="block text-sm font-medium text-[var(--primary-color-sarami)]">Email Address</label>
+                            <input type="email" id="email" name="email" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[var(--accent-color-sarami)] focus:border-[var(--accent-color-sarami)]">
+                        </div>
+                         <div class="mt-4">
+                            <label for="phone" class="block text-sm font-medium text-[var(--primary-color-sarami)]">Phone Number (e.g., 07...)</label>
+                            <input type="tel" id="phone" name="phone" required pattern="^(0\d{9}|254\d{9})$" placeholder="0712345678" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[var(--accent-color-sarami)] focus:border-[var(--accent-color-sarami)]">
+                        </div>
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-[var(--primary-color-sarami)]">Quantity</label>
+                            <div class="flex items-center mt-1">
+                                <button type="button" id="minus-btn" class="px-3 py-1 border border-gray-300 rounded-l-md hover:bg-gray-100">-</button>
+                                <input type="number" id="quantity" name="quantity" value="1" readonly class="w-16 text-center border-t border-b border-gray-300">
+                                <button type="button" id="plus-btn" class="px-3 py-1 border border-gray-300 rounded-r-md hover:bg-gray-100">+</button>
+                            </div>
+                        </div>
+                        <div class="mt-6 text-xl font-bold text-[var(--primary-color-sarami)]">
+                            <span>Total: KES </span>
+                            <span id="total-price">6500</span>
+                        </div>
+                         <div id="message-area" class="mt-4 text-sm"></div>
+
+                        <div class="mt-6">
+                            <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-[var(--primary-color-sarami)] bg-[var(--accent-color-sarami)] hover:bg-[#B8860B] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--accent-color-sarami)] disabled:bg-gray-400 disabled:cursor-not-allowed">
+                                Book Now
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div id="ticket-section" class="hidden">
+                     <h2 class="text-2xl font-bold text-[var(--success-color)]">Booking Confirmed!</h2>
+                     <p class="text-gray-600 mt-1">Your ticket is ready. Please present this QR code at the event entrance.</p>
+                    
+                     <div class="mt-6 p-4 rounded-lg bg-gray-50 ticket">
+                         <div class="flex flex-col md:flex-row gap-4">
+                             <div id="qrcode" class="mx-auto md:mx-0"></div>
+                             <div>
+                                 <p class="text-lg font-bold text-[var(--primary-color-sarami)]" id="ticket-name"></p>
+                                 <p class="text-sm text-gray-600" id="ticket-email"></p>
+                                 <hr class="my-2">
+                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Event:</strong> Sarami Signature Gala 2025</p>
+                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Tickets:</strong> <span id="ticket-quantity"></span></p>
+                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Order ID:</strong> <span id="ticket-order-id"></span></p>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="mt-6">
+                          <button onclick="window.print()" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--secondary-color-sarami)] hover:bg-[#005a4a]">
+                             Print Ticket
+                         </button>
+                     </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-[var(--primary-color-sarami)] text-gray-300 py-12">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <p>&copy; <span id="current-year"></span> Sarami Events. All Rights Reserved.</p>
+            <p class="mt-2">Powered with <i class="fas fa-heart text-[var(--accent-color-sarami)]"></i> by Sarami Group</p>
+            <div class="mt-4 flex justify-center space-x-6">
+                <a href="#" aria-label="Sarami Events on Facebook" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300"><i class="fab fa-facebook-f text-xl"></i></a>
+                <a href="#" aria-label="Sarami Events on Twitter" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300"><i class="fab fa-twitter text-xl"></i></a>
+                <a href="#" aria-label="Sarami Events on Instagram" class="hover:text-[var(--accent-color-sarami)] transition-colors duration-300"><i class="fab fa-instagram text-xl"></i></a>
+            </div>
+        </div>
+    </footer>
+
+
+    <script>
+        const quantityInput = document.getElementById('quantity');
+        const minusBtn = document.getElementById('minus-btn');
+        const plusBtn = document.getElementById('plus-btn');
+        const totalPriceEl = document.getElementById('total-price');
+        const ticketForm = document.getElementById('ticket-form');
+        const messageArea = document.getElementById('message-area');
+        
+        const bookingFormDiv = document.getElementById('booking-form');
+        const ticketSectionDiv = document.getElementById('ticket-section');
+
+        const TICKET_PRICE = 7500;
+
+        // --- 1. Quantity and Price Calculation Logic ---
+        function updatePrice() {
+            const quantity = parseInt(quantityInput.value);
+            const totalPrice = TICKET_PRICE * quantity;
+            totalPriceEl.textContent = totalPrice.toLocaleString();
+        }
+
+        minusBtn.addEventListener('click', () => {
+            let quantity = parseInt(quantityInput.value);
+            if (quantity > 1) {
+                quantity--;
+                quantityInput.value = quantity;
+                updatePrice();
+            }
+        });
+
+        plusBtn.addEventListener('click', () => {
+            let quantity = parseInt(quantityInput.value);
+            quantity++;
+            quantityInput.value = quantity;
+            updatePrice();
+        });
+
+        // --- 2. Form Submission Logic ---
+        ticketForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(ticketForm);
+            const bookingDetails = {
+                fullName: formData.get('fullName'),
+                email: formData.get('email'),
+                phone: formData.get('phone'),
+                quantity: parseInt(formData.get('quantity')),
+                amount: TICKET_PRICE * parseInt(formData.get('quantity')),
+                eventId: 'gala2025', 
+                eventName: 'Sarami Signature Gala 2025'
+            };
+            await handleBooking(bookingDetails);
+        });
+
+        // --- 3. Backend Communication and Flow Control ---
+        async function handleBooking(bookingDetails) {
+            setLoadingState(true, 'Connecting to payment provider...');
+
+            try {
+                // --- THIS IS THE LIVE FETCH CALL TO YOUR BACKEND ---
+                const backendUrl = 'http://localhost:3000/api/create-order';
+
+                const response = await fetch(backendUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bookingDetails)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'An unknown error occurred.');
+                }
+                
+                const backendResponse = await response.json();
+                
+                // --- SUCCESS! REDIRECT TO THE PAYMENT GATEWAY ---
+                if (backendResponse.success && backendResponse.paymentGatewayUrl) {
+                    console.log(`Redirecting to: ${backendResponse.paymentGatewayUrl}`);
+                    messageArea.innerHTML = `<div class="text-[var(--success-color)] font-medium">Success! Redirecting you to the payment page...</div>`;
+                    window.location.href = backendResponse.paymentGatewayUrl;
+                } else {
+                    throw new Error('Could not retrieve payment URL from the server.');
+                }
+
+            } catch (error) {
+                console.error("Booking Error:", error);
+                setLoadingState(false, error.message, true);
+            }
+        }
+        
+        // --- 4. Ticket and QR Code Display (For future use) ---
+        function showTicket(ticketData) {
+            bookingFormDiv.style.display = 'none';
+            ticketSectionDiv.classList.remove('hidden');
+
+            document.getElementById('ticket-name').textContent = ticketData.fullName;
+            document.getElementById('ticket-email').textContent = ticketData.email;
+            document.getElementById('ticket-quantity').textContent = ticketData.quantity;
+            document.getElementById('ticket-order-id').textContent = ticketData.orderId;
+
+            const qrCodeData = JSON.stringify({
+                orderId: ticketData.orderId,
+                name: ticketData.fullName,
+                event: ticketData.eventId
+            });
+            
+            try {
+                const typeNumber = 4;
+                const errorCorrectionLevel = 'L';
+                const qr = qrcode(typeNumber, errorCorrectionLevel);
+                qr.addData(qrCodeData);
+                qr.make();
+                document.getElementById('qrcode').innerHTML = qr.createImgTag(5, 8);
+            } catch (e) {
+                console.error("QR Code generation failed:", e);
+                document.getElementById('qrcode').innerHTML = "<p class='text-[var(--error-color)] text-xs'>Could not generate QR code.</p>";
+            }
+        }
+
+        // --- 5. UI Helper for Loading/Error Messages ---
+        function setLoadingState(isLoading, message = '', isError = false) {
+            const submitButton = ticketForm.querySelector('button[type="submit"]');
+            
+            if (isLoading) {
+                messageArea.innerHTML = `<div class="flex items-center text-[var(--secondary-color-sarami)]"><div class="loader mr-2"></div><span>${message}</span></div>`;
+                messageArea.className = 'mt-4 text-sm';
+                submitButton.disabled = true;
+            } else {
+                if (isError) {
+                    messageArea.textContent = `Error: ${message}`;
+                    messageArea.className = 'mt-4 text-sm text-[var(--error-color)] font-medium';
+                } else {
+                    messageArea.innerHTML = '';
+                }
+                submitButton.disabled = false;
+            }
+        }
+
+        document.getElementById('current-year').textContent = new Date().getFullYear();
+    </script>
+
+</body>
+</html>
