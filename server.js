@@ -76,10 +76,14 @@ async function getInfinitiPayToken() {
 
     console.log('Fetching new InfinitiPay token using PARTNER LOGIN...');
     try {
+        // --- PROPOSED CHANGE START ---
+        // Updated authPayload to use client_id, client_secret, and grant_type
         const authPayload = {
-            username: process.env.INFINITIPAY_CLIENT_USERNAME,
-            password: process.env.INFINITIPAY_CLIENT_PASSWORD
+            client_id: process.env.INFINITIPAY_CLIENT_ID,
+            client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
+            grant_type: 'password' // As specified by Peter
         };
+        // --- PROPOSED CHANGE END ---
 
         // Make a POST request to the InfinitiPay authentication URL
         const response = await axios.post(
