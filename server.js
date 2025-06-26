@@ -38,7 +38,7 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- Middleware Setup ---
-// --- PROPOSED CHANGE: Explicitly configure CORS for your frontend origin ---
+// Explicitly configure CORS for your frontend origin
 const corsOptions = {
     origin: 'https://www.saramierevents.co.ke', // IMPORTANT: Set this to your exact frontend domain!
     methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
@@ -46,7 +46,6 @@ const corsOptions = {
     credentials: true // Allow sending cookies, if applicable (usually not for simple APIs)
 };
 app.use(cors(corsOptions)); // Apply CORS middleware with explicit options
-// --- END PROPOSED CHANGE ---
 
 // Parse JSON request bodies
 app.use(express.json());
@@ -84,14 +83,10 @@ async function getInfinitiPayToken() {
 
     console.log('Fetching new InfinitiPay token using PARTNER LOGIN...');
     try {
-        // Updated authPayload to include merchant username/password
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
             client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
             grant_type: 'password', // As specified by Peter
-
-            // Include the merchant username and password for authentication
-            // These values must be set in your Render environment variables
             username: process.env.INFINITIPAY_MERCHANT_USERNAME,
             password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
@@ -118,6 +113,10 @@ async function getInfinitiPayToken() {
         return infinitiPayAccessToken;
     } catch (error) {
         console.error('Error fetching InfinitiPay token:', error.message);
+        // Log the full error response from InfinitiPay if available
+        if (error.response && error.response.data) {
+            console.error('InfinitiPay Auth Error Details:', JSON.stringify(error.response.data, null, 2));
+        }
         // Re-throw the error to be caught by the calling function/endpoint
         throw new Error('Could not authenticate with InfinitiPay.');
     }
@@ -164,6 +163,8 @@ app.post('/api/create-order', async (req, res) => {
             callbackURL: process.env.YOUR_APP_CALLBACK_URL // URL where InfinitiPay sends status updates
         };
 
+        console.log('Sending payment link generation request with payload:', JSON.stringify(paymentLinkPayload, null, 2));
+
         // Request payment link from InfinitiPay
         const infinitiPayResponse = await axios.post(
             process.env.INFINITIPAY_GENERATE_LINK_URL,
@@ -193,7 +194,8 @@ app.post('/api/create-order', async (req, res) => {
                 orderId: orderRef.id
             });
         } else {
-            // Throw an error if InfinitiPay response indicates failure
+            // This 'else' block will only be hit if axios returns 2xx but statusCode is not 200 or checkoutId is missing.
+            // Axios throws for 4xx/5xx by default.
             throw new Error(`Failed to process payment with provider. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
         }
     } catch (error) {
@@ -204,8 +206,22 @@ app.post('/api/create-order', async (req, res) => {
             });
         }
         console.error('Error in /api/create-order endpoint:', error.message);
-        // Send an error response to the frontend
-        res.status(500).json({ success: false, message: error.message, details: error.message });
+
+        // --- PROPOSED CHANGE: Log InfinitiPay's detailed error response ---
+        if (axios.isAxiosError(error) && error.response && error.response.data) {
+            console.error('InfinitiPay Payment Link Error Details:', JSON.stringify(error.response.data, null, 2));
+            // You might want to send a more specific message to the frontend if available
+            // For example, if error.response.data.message exists
+            res.status(500).json({ 
+                success: false, 
+                message: error.response.data.message || 'InfinitiPay payment link generation failed.', 
+                details: error.response.data 
+            });
+        } else {
+            // Handle other types of errors
+            res.status(500).json({ success: false, message: error.message, details: error.message });
+        }
+        // --- END PROPOSED CHANGE ---
     }
 });
 
