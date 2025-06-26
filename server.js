@@ -38,8 +38,16 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- Middleware Setup ---
-// Enable CORS for all origins (consider restricting in production)
-app.use(cors());
+// --- PROPOSED CHANGE: Explicitly configure CORS for your frontend origin ---
+const corsOptions = {
+    origin: 'https://www.saramierevents.co.ke', // IMPORTANT: Set this to your exact frontend domain!
+    methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
+    allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
+    credentials: true // Allow sending cookies, if applicable (usually not for simple APIs)
+};
+app.use(cors(corsOptions)); // Apply CORS middleware with explicit options
+// --- END PROPOSED CHANGE ---
+
 // Parse JSON request bodies
 app.use(express.json());
 // Parse URL-encoded request bodies (for form data)
@@ -76,7 +84,7 @@ async function getInfinitiPayToken() {
 
     console.log('Fetching new InfinitiPay token using PARTNER LOGIN...');
     try {
-        // --- PROPOSED CHANGE: Updated authPayload to include merchant username/password ---
+        // Updated authPayload to include merchant username/password
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
             client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
@@ -84,10 +92,9 @@ async function getInfinitiPayToken() {
 
             // Include the merchant username and password for authentication
             // These values must be set in your Render environment variables
-            username: process.env.INFINITIPAY_MERCHANT_USERNAME, // NEW ENVIRONMENT VARIABLE NEEDED
-            password: process.env.INFINITIPAY_MERCHANT_PASSWORD  // NEW ENVIRONMENT VARIABLE NEEDED
+            username: process.env.INFINITIPAY_MERCHANT_USERNAME,
+            password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
-        // --- END PROPOSED CHANGE ---
 
         // Make a POST request to the InfinitiPay authentication URL
         const response = await axios.post(
