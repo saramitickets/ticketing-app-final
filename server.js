@@ -38,14 +38,16 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- Middleware Setup ---
-// Explicitly configure CORS for your frontend origin
-const corsOptions = {
-    origin: 'https://www.saramierevents.co.ke', // IMPORTANT: Set this to your exact frontend domain!
+// --- TEMPORARY DEBUGGING CORS: Allow all origins to bypass CORS issue ---
+// IMPORTANT: Revert this before production!
+app.use(cors({
+    origin: '*', // Allows all origins
     methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
     allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
-    credentials: true // Allow sending cookies, if applicable (usually not for simple APIs)
-};
-app.use(cors(corsOptions)); // Apply CORS middleware with explicit options
+    credentials: true // Allow sending cookies, if applicable
+}));
+// --- END TEMPORARY DEBUGGING CORS ---
+
 
 // Parse JSON request bodies
 app.use(express.json());
@@ -207,21 +209,20 @@ app.post('/api/create-order', async (req, res) => {
         }
         console.error('Error in /api/create-order endpoint:', error.message);
 
-        // --- PROPOSED CHANGE: Log InfinitiPay's detailed error response ---
+        // Log InfinitiPay's detailed error response
         if (axios.isAxiosError(error) && error.response && error.response.data) {
             console.error('InfinitiPay Payment Link Error Details:', JSON.stringify(error.response.data, null, 2));
             // You might want to send a more specific message to the frontend if available
             // For example, if error.response.data.message exists
-            res.status(500).json({ 
-                success: false, 
-                message: error.response.data.message || 'InfinitiPay payment link generation failed.', 
-                details: error.response.data 
+            res.status(500).json({
+                success: false,
+                message: error.response.data.message || 'InfinitiPay payment link generation failed.',
+                details: error.response.data
             });
         } else {
             // Handle other types of errors
             res.status(500).json({ success: false, message: error.message, details: error.message });
         }
-        // --- END PROPOSED CHANGE ---
     }
 });
 
