@@ -187,6 +187,10 @@ app.post('/api/create-order', async (req, res) => {
         // You'll need to adapt this based on actual STK Push API response.
         // Assuming a success status code and a transaction ID is returned.
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
+            // --- ADDED DEBUGGING LOG FOR RAW SUCCESS RESPONSE ---
+            console.log('InfinitiPay STK Push Raw Success Response:', JSON.stringify(infinitiPayResponse.data, null, 2));
+            // --- END ADDED DEBUGGING LOG ---
+
             const transactionId = infinitiPayResponse.data.transactionId || infinitiPayResponse.data.transactionReference; // Check response for actual ID field
             if (transactionId) {
                 await orderRef.update({ infinitiPayTransactionId: transactionId, status: 'INITIATED_STK_PUSH' });
