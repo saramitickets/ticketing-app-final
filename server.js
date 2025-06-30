@@ -38,16 +38,14 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- Middleware Setup ---
-// --- TEMPORARY DEBUGGING CORS: Allow all origins to bypass CORS issue ---
-// IMPORTANT: Revert this before production!
-app.use(cors({
-    origin: '*', // Allows all origins
+// Explicitly configure CORS for your frontend origin
+const corsOptions = {
+    origin: 'https://www.saramierevents.co.ke', // IMPORTANT: Set this to your exact frontend domain!
     methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
     allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
     credentials: true // Allow sending cookies, if applicable
-}));
-// --- END TEMPORARY DEBUGGING CORS ---
-
+};
+app.use(cors(corsOptions)); // Apply CORS middleware with explicit options
 
 // Parse JSON request bodies
 app.use(express.json());
@@ -127,7 +125,7 @@ async function getInfinitiPayToken() {
 
 // --- API Endpoint for Creating an Order ---
 // This endpoint handles the initial booking request from the frontend,
-// creates an order in Firestore, and generates a payment link via InfinitiPay.
+// creates an order in Firestore, and initiates an STK Push payment via InfinitiPay.
 app.post('/api/create-order', async (req, res) => {
     console.log('Received booking request at /api/create-order:', req.body);
     const { fullName, email, phone, amount, quantity, eventId, eventName } = req.body;
@@ -144,7 +142,7 @@ app.post('/api/create-order', async (req, res) => {
             fullName, email, phone, amount, quantity, eventId, eventName,
             status: 'PENDING', // Initial status
             createdAt: admin.firestore.FieldValue.serverTimestamp(), // Timestamp when created
-            infinitiPayCheckoutId: null // To be updated later
+            infinitiPayTransactionId: null // To be updated later with STK Push transaction ID
         };
 
         // Add the order to the 'orders' collection in Firestore
@@ -154,23 +152,28 @@ app.post('/api/create-order', async (req, res) => {
         // Get InfinitiPay access token
         const token = await getInfinitiPayToken();
 
-        // Prepare payload for generating payment link
-        const paymentLinkPayload = {
-            amount: String(amount), // Amount needs to be a string for InfinitiPay
+        // --- PROPOSED CHANGE: STK Push Payload ---
+        // The phone number might need specific formatting (e.g., 2547...)
+        // Ensure 'phone' from frontend is clean and in the required format.
+        const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
+
+        const stkPushPayload = {
+            amount: String(amount), // Amount as string (assuming this is consistent with generateLink)
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
+            customerPhone: cleanedPhoneNumber, // Customer's phone number for STK Push
             transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
-            customerName: fullName,
             callbackURL: process.env.YOUR_APP_CALLBACK_URL // URL where InfinitiPay sends status updates
         };
 
-        console.log('Sending payment link generation request with payload:', JSON.stringify(paymentLinkPayload, null, 2));
+        console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
 
-        // Request payment link from InfinitiPay
+        // Request STK Push from InfinitiPay
+        // Using INFINITIPAY_STKPUSH_URL environment variable
         const infinitiPayResponse = await axios.post(
-            process.env.INFINITIPAY_GENERATE_LINK_URL,
-            paymentLinkPayload,
+            process.env.INFINITIPAY_STKPUSH_URL, // NEW ENDPOINT
+            stkPushPayload,
             {
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -179,44 +182,43 @@ app.post('/api/create-order', async (req, res) => {
             }
         );
 
-        const checkoutId = infinitiPayResponse.data.checkoutId;
-
-        // Check if payment link generation was successful
-        if (infinitiPayResponse.data.statusCode === 200 && checkoutId) {
-            const paymentGatewayUrl = `https://dtbx-infinitilite-dashboard-v2-client-uat.azurewebsites.net/checkout/${checkoutId}`;
-
-            // Update the Firestore order with the InfinitiPay checkout ID
-            await orderRef.update({ infinitiPayCheckoutId: checkoutId });
-
-            // Send success response to frontend with payment gateway URL
-            res.status(200).json({
-                success: true,
-                message: 'Order created, proceed to payment.',
-                paymentGatewayUrl,
-                orderId: orderRef.id
-            });
+        // --- STK Push Response Handling ---
+        // Expected response structure might differ from generateLink
+        // You'll need to adapt this based on actual STK Push API response.
+        // Assuming a success status code and a transaction ID is returned.
+        if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
+            const transactionId = infinitiPayResponse.data.transactionId || infinitiPayResponse.data.transactionReference; // Check response for actual ID field
+            if (transactionId) {
+                await orderRef.update({ infinitiPayTransactionId: transactionId, status: 'INITIATED_STK_PUSH' });
+                res.status(200).json({
+                    success: true,
+                    message: 'STK Push initiated successfully. Please check your phone for the prompt.',
+                    transactionId: transactionId,
+                    orderId: orderRef.id
+                });
+            } else {
+                throw new Error(`STK Push initiated, but no transaction ID found in response: ${JSON.stringify(infinitiPayResponse.data)}`);
+            }
         } else {
-            // This 'else' block will only be hit if axios returns 2xx but statusCode is not 200 or checkoutId is missing.
-            // Axios throws for 4xx/5xx by default.
-            throw new Error(`Failed to process payment with provider. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
+            throw new Error(`STK Push failed with provider. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
         }
+        // --- END PROPOSED CHANGE ---
     } catch (error) {
         // If an order was created before the error, update its status to FAILED
+        // Ensure that orderRef is defined before attempting to update it.
         if (orderRef) {
             await orderRef.update({ status: 'FAILED', errorMessage: error.message }).catch(updateErr => {
-                console.error('Error updating order status to FAILED:', updateErr.message);
+                console.error('Error updating order status to FAILED after STK Push attempt:', updateErr.message);
             });
         }
         console.error('Error in /api/create-order endpoint:', error.message);
 
         // Log InfinitiPay's detailed error response
         if (axios.isAxiosError(error) && error.response && error.response.data) {
-            console.error('InfinitiPay Payment Link Error Details:', JSON.stringify(error.response.data, null, 2));
-            // You might want to send a more specific message to the frontend if available
-            // For example, if error.response.data.message exists
+            console.error('InfinitiPay STK Push Error Details:', JSON.stringify(error.response.data, null, 2));
             res.status(500).json({
                 success: false,
-                message: error.response.data.message || 'InfinitiPay payment link generation failed.',
+                message: error.response.data.message || 'InfinitiPay STK Push failed.',
                 details: error.response.data
             });
         } else {
@@ -229,6 +231,7 @@ app.post('/api/create-order', async (req, res) => {
 
 // --- InfinitiPay Callback Endpoint ---
 // This endpoint receives payment status updates from InfinitiPay.
+// This callback will be essential for updating the order status for STK Push.
 app.post('/api/infinitipay-callback', async (req, res) => {
     console.log('--- Received InfinitiPay Callback ---');
     console.log('Callback Body:', JSON.stringify(req.body, null, 2));
@@ -250,9 +253,10 @@ app.post('/api/infinitipay-callback', async (req, res) => {
         }
 
         // Determine the new status based on InfinitiPay's transactionStatus
+        // The specific 'transactionStatus' values for STK Push success/failure might differ
+        // You might need to confirm these values with Peter/documentation.
         let newStatus = ['COMPLETED', 'SUCCESS', 'PAID'].includes((transactionStatus || '').toUpperCase()) ? 'PAID' : 'FAILED';
 
-        // Update the order status and save callback data in Firestore
         await orderRef.update({ status: newStatus, callbackData: req.body });
         console.log(`Updated order ${transactionReference} status to ${newStatus}`);
 
