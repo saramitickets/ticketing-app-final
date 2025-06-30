@@ -38,14 +38,10 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- Middleware Setup ---
-// Explicitly configure CORS for your frontend origin
-const corsOptions = {
-    origin: 'https://www.saramierevents.co.ke', // IMPORTANT: Set this to your exact frontend domain!
-    methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
-    allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
-    credentials: true // Allow sending cookies, if applicable
-};
-app.use(cors(corsOptions)); // Apply CORS middleware with explicit options
+// --- DEBUGGING CORS: Temporarily allow ALL origins ---
+// This is for troubleshooting only. Revert to a specific origin for production.
+app.use(cors()); // Simple usage to allow all origins
+// --- END DEBUGGING CORS ---
 
 // Parse JSON request bodies
 app.use(express.json());
