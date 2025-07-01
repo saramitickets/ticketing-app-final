@@ -161,7 +161,7 @@ app.post('/api/create-order', async (req, res) => {
             customerPhone: cleanedPhoneNumber, // Customer's phone number for STK Push
             transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
             callbackURL: process.env.YOUR_APP_CALLBACK_URL ,// URL where InfinitiPay sends status updates
-            "ptyId": "1"
+            ptyId: "1"
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
