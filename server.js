@@ -154,7 +154,7 @@ app.post('/api/create-order', async (req, res) => {
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
 
         const stkPushPayload = {
-            amount: double(amount), // Amount as string (assuming this is consistent with generateLink)
+            amount: Double(amount), // Amount as string (assuming this is consistent with generateLink)
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
