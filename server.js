@@ -6,8 +6,6 @@ require('dotenv').config(); // Load environment variables from .env file
 const crypto = require('crypto'); // Import crypto for generating UUIDs
 
 // --- FIREBASE DATABASE SETUP ---
-// Ensure serviceAccountKey.json is in the same directory as server.js
-// This file contains your Firebase project's service account credentials.
 const admin = require('firebase-admin');
 const serviceAccount = require('./serviceAccountKey.json');
 
@@ -18,13 +16,11 @@ try {
     console.log('Firebase Admin SDK initialized successfully.');
 } catch (error) {
     console.error('Error initializing Firebase Admin SDK:', error.message);
-    // Exit the process if Firebase initialization fails, as it's critical
     process.exit(1);
 }
 const db = admin.firestore(); // Get a reference to the Firestore database
 
 // --- SENDGRID EMAIL SETUP ---
-// Configure SendGrid with your API key from environment variables
 const sgMail = require('@sendgrid/mail');
 if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -32,47 +28,23 @@ if (process.env.SENDGRID_API_KEY) {
 } else {
     console.warn('SENDGRID_API_KEY is not set. Email functionality might be limited.');
 }
-// --- END SENDGRID SETUP ---
 
-
-// Initialize Express app
 const app = express();
-
-// --- Middleware Setup ---
-// --- DEBUGGING CORS: Temporarily allow ALL origins ---
-// This is for troubleshooting only. Revert to a specific origin for production.
-app.use(cors()); // Simple usage to allow all origins
-// --- END DEBUGGING CORS ---
-
-// Parse JSON request bodies
+app.use(cors());
 app.use(express.json());
-// Parse URL-encoded request bodies (for form data)
 app.use(express.urlencoded({ extended: true }));
 
-// Determine the port to listen on: use the environment variable PORT provided by Render,
-// or default to 3000 for local development.
 const PORT = process.env.PORT || 3000;
 
-// --- Test Route ---
-// This GET route is for a simple health check or to confirm the server is running.
 app.get('/', (req, res) => {
     res.status(200).send('Sarami Ticketing Backend is running!');
 });
 
-// --- IMPORTANT: FRONTEND FETCH URL NOTE ---
-// Your frontend 'fetch' call's URL for booking MUST be:
-// 'https://ticketing-app-final.onrender.com/api/create-order'
-// It should NOT be just 'https://ticketing-app-final.onrender.com/' for POST requests.
-// --- END FRONTEND FETCH URL NOTE ---
-
-
-// --- InfinitiPay Authentication Function ---
-// Caches the token to avoid re-fetching on every request until it expires.
+// --- InfinitiPay Authentication Function (No Change) ---
 let infinitiPayAccessToken = null;
 let tokenExpiryTime = null;
 
 async function getInfinitiPayToken() {
-    // If token exists and is not expired, use cached token
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         console.log('Using cached InfinitiPay token');
         return infinitiPayAccessToken;
@@ -83,26 +55,23 @@ async function getInfinitiPayToken() {
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
             client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
-            grant_type: 'password', // As specified by Peter
+            grant_type: 'password',
             username: process.env.INFINITIPAY_MERCHANT_USERNAME,
             password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
 
-        // Make a POST request to the InfinitiPay authentication URL
         const response = await axios.post(
             process.env.INFINITIPAY_AUTH_URL,
             authPayload,
             { headers: { 'Content-Type': 'application/json' } }
         );
 
-        // Extract the access token from the response
         const accessToken = response.data.token || response.data.access_token;
         if (!accessToken) {
             throw new Error('Access Token not found in partner login response.');
         }
 
         infinitiPayAccessToken = accessToken;
-        // Set expiry time (default to 1 hour if not provided, subtract 60 seconds buffer)
         const expiresIn = response.data.expires_in || 3600;
         tokenExpiryTime = Date.now() + (expiresIn - 60) * 1000;
 
@@ -110,11 +79,9 @@ async function getInfinitiPayToken() {
         return infinitiPayAccessToken;
     } catch (error) {
         console.error('Error fetching InfinitiPay token:', error.message || 'Unknown error during token fetch.');
-        // Log the full error response from InfinitiPay if available
         if (error.response && error.response.data) {
             console.error('InfinitiPay Auth Error Details:', JSON.stringify(error.response.data, null, 2));
         }
-        // Re-throw the error to be caught by the calling function/endpoint
         throw new Error('Could not authenticate with InfinitiPay.');
     }
 }
@@ -123,57 +90,52 @@ app.post('/api/create-order', async (req, res) => {
     console.log('Received booking request at /api/create-order:', req.body);
     const { fullName, email, phone, amount, quantity, eventId, eventName } = req.body;
 
-    // Basic input validation
     if (!fullName || !email || !phone || !amount || !eventId || !eventName || !quantity) {
         return res.status(400).json({ success: false, message: 'Missing required booking information.' });
     }
 
-    let orderRef; // Variable to hold Firestore document reference
-    let firestoreOrderId; // NEW: Variable to store the Firestore generated ID
+    let orderRef;
+    let firestoreOrderId; // To hold the Firestore generated ID
     try {
         console.log('Creating PENDING order in Firestore...');
         const orderData = {
             fullName, email, phone, amount, quantity, eventId, eventName,
-            status: 'PENDING', // Initial status
-            createdAt: admin.firestore.FieldValue.serverTimestamp(), // Timestamp when created
-            // Renamed and initialized to null; will be updated after STK push initiates
-            infinitiPayTransactionId: null
+            status: 'PENDING',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            // Rename to make it clear this is InfinitiPay's *specific* transaction ID if they provide it
+            infinitiPayAssignedTxnId: null, // Will store InfinitiPay's `results.transactionId` if available
+            // Add a field to store the InfinitiPay `merchantTxnId` if different and useful for tracking
+            infinitiPayMerchantTxnId: null
         };
 
-        // Add the order to the 'orders' collection in Firestore
         orderRef = await db.collection('orders').add(orderData);
-        firestoreOrderId = orderRef.id; // Store the Firestore generated ID
+        firestoreOrderId = orderRef.id; // Get the Firestore-generated ID
         console.log(`Successfully created order document with ID: ${firestoreOrderId}`);
 
-        // Get InfinitiPay access token
         const token = await getInfinitiPayToken();
 
-        // --- PROPOSED CHANGE: STK Push Payload ---
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
-
-        // Extract last 3 digits of merchant ID
         const fullMerchantId = process.env.INFINITIPAY_MERCHANT_ID;
         const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : '';
 
         const stkPushPayload = {
-            // Keep sending YOUR Firestore order ID as a reference to InfinitiPay.
-            // This is useful if they allow it, so you have your internal reference.
-            transactionId: firestoreOrderId, // Still sending YOUR Firestore order ID
-            transactionReference: firestoreOrderId, // Still sending YOUR Firestore order ID
-            amount: amount, // Passed as a number (double)
-            merchantId: shortMerchantId, // UPDATED: Using last 3 digits as per Peter
+            // CRITICAL CHANGE: Always send your Firestore Order ID as transactionId and transactionReference
+            // This is the primary key you'll use for lookup in the callback.
+            transactionId: firestoreOrderId, // Use YOUR Firestore ID
+            transactionReference: firestoreOrderId, // Use YOUR Firestore ID
+            amount: amount,
+            merchantId: shortMerchantId,
             transactionTypeId: 1,
-            payerAccount: cleanedPhoneNumber, // Changed from customerPhone to payerAccount
-            narration: `Tickets for ${eventName}`, // UPDATED: Changed from 'description' to 'narration'
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL, // URL where InfinitiPay sends status updates
-            ptyId: 1 // Added as per Peter's latest instruction
+            payerAccount: cleanedPhoneNumber,
+            narration: `Tickets for ${eventName}`,
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL,
+            ptyId: 1
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
 
-        // Request STK Push from InfinitiPay
         const infinitiPayResponse = await axios.post(
-            process.env.INFINITIPAY_STKPUSH_URL, // NEW ENDPOINT
+            process.env.INFINITIPAY_STKPUSH_URL,
             stkPushPayload,
             {
                 headers: {
@@ -183,50 +145,49 @@ app.post('/api/create-order', async (req, res) => {
             }
         );
 
-        // --- STK Push Response Handling ---
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            // --- ADDED DEBUGGING LOG FOR RAW SUCCESS RESPONSE ---
             console.log('InfinitiPay STK Push Raw Success Response:', JSON.stringify(infinitiPayResponse.data, null, 2));
-            // --- END ADDED DEBUGGING LOG ---
 
-            // --- CRITICAL CHANGE: Extract transactionId from results.transactionId (InfinitiPay's own ID) ---
-            const infinitiPayAssignedTransactionId = infinitiPayResponse.data.results && infinitiPayResponse.data.results.transactionId
-                                                     ? infinitiPayResponse.data.results.transactionId
-                                                     : null; // Fallback to null if not found
+            let updateData = { status: 'INITIATED_STK_PUSH' };
 
-            if (infinitiPayAssignedTransactionId) {
-                // Update the Firestore document with InfinitiPay's transactionId
-                // This is the ID you will use to find the order in the callback
-                await orderRef.update({
-                    infinitiPayTransactionId: infinitiPayAssignedTransactionId,
-                    status: 'INITIATED_STK_PUSH'
-                });
-                console.log(`Updated Firestore order ${firestoreOrderId} with InfinitiPay Transaction ID: ${infinitiPayAssignedTransactionId}`);
+            // IMPORTANT: Store InfinitiPay's specific transactionId if they provide it
+            const infinitiPayAssignedTxnId = infinitiPayResponse.data.results && infinitiPayResponse.data.results.transactionId
+                                                ? infinitiPayResponse.data.results.transactionId
+                                                : null;
 
-                res.status(200).json({
-                    success: true,
-                    message: 'STK Push initiated successfully. Please check your phone for the prompt.',
-                    transactionId: infinitiPayAssignedTransactionId, // Send THEIR transaction ID to frontend
-                    orderId: firestoreOrderId // Still send your internal order ID for reference
-                });
+            // Also store their merchantTxnId if available, as it might be useful for reconciliation
+            const infinitiPayMerchantTxnId = infinitiPayResponse.data.results && infinitiPayResponse.data.results.merchantTxnId
+                                                ? infinitiPayResponse.data.results.merchantTxnId
+                                                : null;
+
+            if (infinitiPayAssignedTxnId) {
+                updateData.infinitiPayAssignedTxnId = infinitiPayAssignedTxnId;
+                console.log(`Stored InfinitiPay Assigned Transaction ID: ${infinitiPayAssignedTxnId}`);
             } else {
-                // If InfinitiPay didn't return its own transactionId in results.transactionId,
-                // log a warning and proceed, but this might lead to issues in callback matching
-                console.warn(`STK Push initiated, but no 'transactionId' found in InfinitiPay response. Falling back to internal Firestore ID for response.`);
-                await orderRef.update({ status: 'INITIATED_STK_PUSH' }); // Update without InfinitiPay ID
-                // You might choose to throw an error here if `infinitiPayAssignedTransactionId` is mandatory for your flow.
-                res.status(200).json({
-                    success: true,
-                    message: 'STK Push initiated successfully. Please check your phone for the prompt. (InfinitiPay ID not received)',
-                    transactionId: firestoreOrderId, // Fallback to sending your Firestore ID
-                    orderId: firestoreOrderId
-                });
+                console.warn(`InfinitiPay STK Push initiated, but no 'transactionId' found in InfinitiPay response. This is not ideal, but proceeding with internal ID.`);
             }
+
+            if (infinitiPayMerchantTxnId) {
+                updateData.infinitiPayMerchantTxnId = infinitiPayMerchantTxnId;
+                console.log(`Stored InfinitiPay Merchant Transaction ID: ${infinitiPayMerchantTxnId}`);
+            }
+
+            // Update the Firestore document
+            await orderRef.update(updateData);
+
+            res.status(200).json({
+                success: true,
+                message: 'STK Push initiated successfully. Please check your phone for the prompt.',
+                // Respond with your internal Firestore ID as the primary transaction identifier for the frontend
+                // You can also include InfinitiPay's IDs if the frontend needs them for display/tracking.
+                orderId: firestoreOrderId,
+                infinitiPayAssignedTxnId: infinitiPayAssignedTxnId, // Send this if available
+                infinitiPayMerchantTxnId: infinitiPayMerchantTxnId // Send this if available
+            });
         } else {
             throw new Error(`STK Push failed with provider. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
         }
     } catch (error) {
-        // If an order was created before the error, update its status to FAILED
         if (orderRef) {
             await orderRef.update({ status: 'FAILED', errorMessage: error.message || 'Unknown error' }).catch(updateErr => {
                 console.error('Error updating order status to FAILED after STK Push attempt:', updateErr.message);
@@ -234,7 +195,6 @@ app.post('/api/create-order', async (req, res) => {
         }
         console.error('Error in /api/create-order endpoint:', error.message || 'Unknown error occurred.');
 
-        // Log InfinitiPay's detailed error response
         if (axios.isAxiosError(error) && error.response && error.response.data) {
             console.error('InfinitiPay STK Push Error Details:', JSON.stringify(error.response.data, null, 2));
             res.status(500).json({
@@ -243,7 +203,6 @@ app.post('/api/create-order', async (req, res) => {
                 details: error.response.data
             });
         } else {
-            // Handle other types of errors
             res.status(500).json({ success: false, message: error.message || 'An unexpected error occurred.', details: error });
         }
     }
@@ -251,8 +210,7 @@ app.post('/api/create-order', async (req, res) => {
 
 
 // --- InfinitiPay Callback Endpoint ---
-// This endpoint receives payment status updates from InfinitiPay.
-app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => { // Use express.raw to get the raw body
+app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     console.log('--- Received InfinitiPay Callback ---');
     console.log('Callback Content-Type:', req.headers['content-type']);
 
@@ -284,66 +242,109 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
     const results = callbackData.results;
 
-    // --- CRITICAL CHANGE: Use results.transactionId from the callback payload ---
-    // This is the ID (e.g., "IL98556") that InfinitiPay sent back.
-    const infinitiPayCallbackTransactionId = results.transactionId;
+    // CRITICAL CHANGE: Get YOUR transaction ID from the callback.
+    // InfinitiPay should return the 'transactionId' or 'merchantTxnId' that YOU sent them.
+    // Based on your logs, `transactionId` in the *callback* contains InfinitiPay's ID.
+    // However, if your `firestoreOrderId` was sent as `transactionReference` or `merchantTxnId`
+    // and those are reliable in the callback, use them.
+    // For now, let's assume `transactionReference` or `merchantTxnId` should carry your original ID.
+    // If neither works, then the lookup by `infinitiPayAssignedTxnId` (Method 1 from previous step)
+    // is the only way, but that requires InfinitiPay to *always* provide it in the initial response.
 
-    const transactionStatus = callbackData.statusCode; // Use statusCode for primary status check
-    const transactionMessage = callbackData.message; // Use message for detailed status
+    // Let's first try to look up by transactionReference, as you sent your Firestore ID there.
+    const transactionReferenceFromCallback = results.transactionReference || results.transactionId || results.merchantTxnId; // Prioritize based on what InfinitiPay sends back that *matches your original ID*
 
-    // Validate essential callback data
-    if (!infinitiPayCallbackTransactionId) {
-        console.error('Callback Error: Missing transactionId in results from InfinitiPay. Callback Payload:', JSON.stringify(callbackData, null, 2));
-        return res.status(400).json({ success: false, message: 'Missing transactionId in callback results.' });
+    const infinitiPayAssignedTxnIdFromCallback = results.transactionId; // This is the 'IL98557' that caused previous errors
+
+    const transactionStatus = callbackData.statusCode;
+    const transactionMessage = callbackData.data && callbackData.data.description || callbackData.message; // Use data.description if available, then message
+
+    if (!transactionReferenceFromCallback) {
+        console.error('Callback Error: Missing primary transaction reference (transactionReference, transactionId, or merchantTxnId) in callback results. Callback Payload:', JSON.stringify(callbackData, null, 2));
+        return res.status(400).json({ success: false, message: 'Missing primary transaction reference in callback.' });
     }
 
     try {
-        // --- CRITICAL CHANGE: Query Firestore using the infinitiPayTransactionId field ---
-        // Instead of .doc(), we use .where() to find the document that has this InfinitiPay ID.
-        const ordersSnapshot = await db.collection('orders')
-                                        .where('infinitiPayTransactionId', '==', infinitiPayCallbackTransactionId)
-                                        .limit(1) // Limit to 1 as this ID should be unique to an order
-                                        .get();
+        let orderDoc;
+        let orderRef;
+        let firestoreOrderId;
 
-        if (ordersSnapshot.empty) {
-            console.warn(`Order with InfinitiPay transactionId ${infinitiPayCallbackTransactionId} not found in Firestore. Callback Payload:`, JSON.stringify(callbackData, null, 2));
-            return res.status(404).json({ success: false, message: 'Order not found for callback (InfinitiPay transaction ID mismatch).' });
+        // Try to find the order using the transactionReference you sent
+        orderRef = db.collection('orders').doc(transactionReferenceFromCallback);
+        orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            console.warn(`Order with Firestore ID (from callback's transactionReference) ${transactionReferenceFromCallback} not found. Attempting lookup by InfinitiPayAssignedTxnId if available...`);
+
+            // If not found by direct ID, try to find by the InfinitiPay assigned ID if present in the callback
+            if (infinitiPayAssignedTxnIdFromCallback && infinitiPayAssignedTxnIdFromCallback !== transactionReferenceFromCallback) {
+                const altOrdersSnapshot = await db.collection('orders')
+                                                .where('infinitiPayAssignedTxnId', '==', infinitiPayAssignedTxnIdFromCallback)
+                                                .limit(1)
+                                                .get();
+                if (!altOrdersSnapshot.empty) {
+                    orderDoc = altOrdersSnapshot.docs[0];
+                    orderRef = orderDoc.ref;
+                    firestoreOrderId = orderDoc.id;
+                    console.log(`Order found by InfinitiPayAssignedTxnId: ${firestoreOrderId}`);
+                }
+            }
+
+            if (!orderDoc) { // Still not found
+                console.error(`Order not found by any ID in Firestore for callback. Callback Payload:`, JSON.stringify(callbackData, null, 2));
+                return res.status(404).json({ success: false, message: 'Order not found for callback by any matching ID.' });
+            }
+        } else {
+             firestoreOrderId = orderDoc.id;
         }
 
-        // Get the actual Firestore document and its reference
-        const orderDoc = ordersSnapshot.docs[0];
-        const orderRef = orderDoc.ref;
-        const firestoreOrderId = orderDoc.id; // Your internal Firestore ID
 
-        // Determine the new status based on InfinitiPay's callback status codes and messages
-        let newStatus = 'FAILED'; // Default to FAILED
-        if (transactionStatus === 200 && transactionMessage === "Transaction processed successfully") {
+        let newStatus = 'FAILED';
+        // Check for success: status code 200 and success message
+        if (transactionStatus === 200 && transactionMessage && (
+            transactionMessage.toLowerCase().includes("transaction processed successfully") ||
+            transactionMessage.toLowerCase().includes("success") // Add broad success check
+        )) {
             newStatus = 'PAID';
-        } else if (transactionStatus === 400 && transactionMessage === "Request cancelled by user") {
-            newStatus = 'CANCELLED'; // Specific status for user cancellation
-        } else if (transactionStatus === 400 && transactionMessage === "DS timeout user cannot be reached") {
-            newStatus = 'TIMED_OUT'; // Specific status for timeout
+        } else if (transactionMessage && transactionMessage.toLowerCase().includes("request cancelled by user")) {
+            newStatus = 'CANCELLED';
+        } else if (transactionMessage && transactionMessage.toLowerCase().includes("ds timeout user cannot be reached")) {
+            newStatus = 'TIMED_OUT';
+        } else if (transactionStatus === 400 && transactionMessage && transactionMessage.toLowerCase().includes("duplicate request")) {
+            // Handle duplicate requests gracefully if needed, maybe don't change status
+            console.warn(`InfinitiPay callback: Duplicate request for ${transactionReferenceFromCallback}. Status: ${transactionStatus}, Message: ${transactionMessage}`);
+             return res.status(200).json({ success: true, message: 'Callback already processed or duplicate.' });
         }
-        // You might want to add more specific statuses based on other messages if they exist
+        // Add more specific status mappings if InfinitiPay provides other definitive messages/codes
 
-        // Update the order status and save the full callback data in Firestore
-        await orderRef.update({
+        let updateFields = {
             status: newStatus,
-            callbackData: callbackData, // Save the entire callback payload for debugging
+            callbackData: callbackData,
             infinitiPayCallbackStatus: transactionStatus,
             infinitiPayCallbackMessage: transactionMessage,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        console.log(`Updated order ${firestoreOrderId} (InfinitiPay ID: ${infinitiPayCallbackTransactionId}) status to ${newStatus} based on InfinitiPay callback.`);
+        };
 
-        // --- SEND EMAIL ON SUCCESSFUL PAYMENT ---
+        // If InfinitiPay assigned a specific transactionId in the callback and it's different from our internal ID, store it
+        if (infinitiPayAssignedTxnIdFromCallback && infinitiPayAssignedTxnIdFromCallback !== firestoreOrderId) {
+             updateFields.infinitiPayAssignedTxnId = infinitiPayAssignedTxnIdFromCallback;
+        }
+        // Also store their merchantTxnId from callback if present
+        if (results.merchantTxnId) {
+             updateFields.infinitiPayMerchantTxnId = results.merchantTxnId;
+        }
+
+
+        await orderRef.update(updateFields);
+        console.log(`Updated order ${firestoreOrderId} status to ${newStatus} based on InfinitiPay callback. InfinitiPay TxnId: ${infinitiPayAssignedTxnIdFromCallback || 'N/A'}`);
+
         if (newStatus === 'PAID') {
-            const orderData = orderDoc.data(); // Get the latest data from the found document
+            const orderData = orderDoc.data();
             console.log(`Payment successful for order ${firestoreOrderId}. Sending email receipt...`);
 
             const emailMsg = {
-                to: orderData.email, // The customer's email address
-                from: process.env.SENDGRID_FROM_EMAIL, // Your verified sender email (MUST be verified in SendGrid)
+                to: orderData.email,
+                from: process.env.SENDGRID_FROM_EMAIL,
                 subject: `Your Ticket for ${orderData.eventName}`,
                 html: `
                     <h1>Thank you for your order!</h1>
@@ -351,7 +352,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                     <p>Your booking is confirmed. Here are your ticket details:</p>
                     <ul>
                         <li><strong>Order ID:</strong> ${firestoreOrderId}</li>
-                        <li><strong>InfinitiPay Transaction ID:</strong> ${infinitiPayCallbackTransactionId}</li>
+                        ${infinitiPayAssignedTxnIdFromCallback ? `<li><strong>InfinitiPay Transaction ID:</strong> ${infinitiPayAssignedTxnIdFromCallback}</li>` : ''}
                         <li><strong>Event:</strong> ${orderData.eventName}</li>
                         <li><strong>Quantity:</strong> ${orderData.quantity}</li>
                         <li><strong>Total Amount:</strong> KES ${orderData.amount.toLocaleString()}</li>
@@ -366,15 +367,12 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 console.log('Email receipt sent successfully to:', orderData.email);
             } catch (emailError) {
                 console.error('Error sending email via SendGrid:', emailError.response ? emailError.response.body : emailError);
-                // Important: Do NOT stop the callback process if email fails, just log it.
             }
         }
-        // --- END EMAIL LOGIC ---
 
-        // Send a success response back to InfinitiPay (as per their callback requirements)
         res.status(200).json({ success: true, message: 'Callback processed successfully.' });
     } catch (error) {
-        console.error(`Error processing callback for InfinitiPay ID ${infinitiPayCallbackTransactionId}:`, error);
+        console.error(`Error processing callback for original reference ${transactionReferenceFromCallback}:`, error);
         res.status(500).json({ success: false, message: 'Internal server error processing callback.' });
     }
 });
@@ -382,7 +380,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
 // --- Generic Error Handling Middleware ---
 app.use((err, req, res, next) => {
-    console.error('Unhandled server error:', err.stack); // Log the full stack trace for debugging
+    console.error('Unhandled server error:', err.stack);
     res.status(500).json({
         success: false,
         message: 'An unexpected internal server error occurred.',
