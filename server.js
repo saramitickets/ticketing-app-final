@@ -159,8 +159,8 @@ app.post('/api/create-order', async (req, res) => {
         const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : ''; // Gets last 3 digits or empty string
 
         const stkPushPayload = {
-            transactionId: crypto.randomUUID(), // NEW: Generate a unique transaction ID for the request
-            transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
+            transactionId: orderRef.id, // Use Firestore order ID as transactionId for InfinitiPay
+            transactionReference: orderRef.id, // Keep this as Firestore order ID
             amount: amount, // Passed as a number (double)
             merchantId: shortMerchantId, // UPDATED: Using last 3 digits as per Peter
             transactionTypeId: 1,
@@ -282,15 +282,18 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
     const results = callbackData.results;
 
-    // Use merchantTxnId from results as it maps to our Firestore orderRef.id (transactionReference)
-    const transactionReference = results.merchantTxnId; // This should be reliable now
+    // --- IMPORTANT CHANGE: Use results.transactionId to find the order ---
+    // This should match the orderRef.id sent in the initial STK Push request
+    const transactionReference = results.transactionId; 
+    // --- END IMPORTANT CHANGE ---
+
     const transactionStatus = callbackData.statusCode; // Use statusCode for primary status check
     const transactionMessage = callbackData.message; // Use message for detailed status
 
     // Validate essential callback data
     if (!transactionReference) {
-        console.error('Callback Error: Missing merchantTxnId in results. Callback Payload:', JSON.stringify(callbackData, null, 2));
-        return res.status(400).json({ success: false, message: 'Missing transactionReference (merchantTxnId) in callback.' });
+        console.error('Callback Error: Missing transactionId in results. Callback Payload:', JSON.stringify(callbackData, null, 2));
+        return res.status(400).json({ success: false, message: 'Missing transactionReference (transactionId) in callback.' });
     }
 
     try {
