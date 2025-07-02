@@ -154,15 +154,15 @@ app.post('/api/create-order', async (req, res) => {
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
 
         const stkPushPayload = {
-            amount: amount, 
+            amount: amount, // Passed as a number (double)
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
-            payerAccount: cleanedPhoneNumber, 
-            transactionReference: orderRef.id, 
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL,
-            ptyId: 1, 
-            transactionTypeId: 1 
+            payerAccount: cleanedPhoneNumber, // Changed from customerPhone to payerAccount as per Peter's instruction
+            transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL, // URL where InfinitiPay sends status updates
+            ptyId: 1, // Added as per Peter's latest instruction
+            transactionTypeId: 1 // Added as per Peter's latest instruction
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
@@ -189,7 +189,11 @@ app.post('/api/create-order', async (req, res) => {
             console.log('InfinitiPay STK Push Raw Success Response:', JSON.stringify(infinitiPayResponse.data, null, 2));
             // --- END ADDED DEBUGGING LOG ---
 
-            const transactionId = infinitiPayResponse.data.transactionId || infinitiPayResponse.data.transactionReference; // Check response for actual ID field
+            // --- IMPORTANT CHANGE: Extract transactionId from results.ref ---
+            const transactionId = infinitiPayResponse.data.results && infinitiPayResponse.data.results.ref
+                                 ? infinitiPayResponse.data.results.ref
+                                 : infinitiPayResponse.data.transactionReference; // Fallback if structure changes or ref is missing
+
             if (transactionId) {
                 await orderRef.update({ infinitiPayTransactionId: transactionId, status: 'INITIATED_STK_PUSH' });
                 res.status(200).json({
@@ -238,13 +242,23 @@ app.post('/api/create-order', async (req, res) => {
 // This callback will be essential for updating the order status for STK Push.
 app.post('/api/infinitipay-callback', async (req, res) => {
     console.log('--- Received InfinitiPay Callback ---');
+    // Log the full callback body for debugging
     console.log('Callback Body:', JSON.stringify(req.body, null, 2));
 
-    const { transactionReference, transactionStatus } = req.body;
+    // Extract relevant fields from the callback payload
+    // Based on the provided sample payloads, the transaction details are nested under 'results'
+    const callbackData = req.body;
+    const results = callbackData.results;
+
+    // Use merchantTxnId from results as it maps to our Firestore orderRef.id (transactionReference)
+    const transactionReference = results ? results.merchantTxnId : null;
+    const transactionStatus = callbackData.statusCode; // Use statusCode for primary status check
+    const transactionMessage = callbackData.message; // Use message for detailed status
 
     // Validate essential callback data
     if (!transactionReference) {
-        return res.status(400).json({ success: false, message: 'Missing transactionReference.' });
+        console.error('Callback Error: Missing merchantTxnId in results.');
+        return res.status(400).json({ success: false, message: 'Missing transactionReference in callback.' });
     }
 
     try {
@@ -252,17 +266,30 @@ app.post('/api/infinitipay-callback', async (req, res) => {
         const orderDoc = await orderRef.get();
 
         if (!orderDoc.exists) {
-            console.warn(`Order with transactionReference ${transactionReference} not found.`);
-            return res.status(404).json({ success: false, message: 'Order not found.' });
+            console.warn(`Order with transactionReference ${transactionReference} not found in Firestore.`);
+            return res.status(404).json({ success: false, message: 'Order not found for callback.' });
         }
 
-        // Determine the new status based on InfinitiPay's transactionStatus
-        // The specific 'transactionStatus' values for STK Push success/failure might differ
-        // You might need to confirm these values with Peter/documentation.
-        let newStatus = ['COMPLETED', 'SUCCESS', 'PAID'].includes((transactionStatus || '').toUpperCase()) ? 'PAID' : 'FAILED';
+        // Determine the new status based on InfinitiPay's callback status codes and messages
+        let newStatus = 'FAILED'; // Default to FAILED
+        if (transactionStatus === 200 && transactionMessage === "Transaction processed successfully") {
+            newStatus = 'PAID';
+        } else if (transactionStatus === 400 && transactionMessage === "Request cancelled by user") {
+            newStatus = 'CANCELLED'; // Specific status for user cancellation
+        } else if (transactionStatus === 400 && transactionMessage === "DS timeout user cannot be reached") {
+            newStatus = 'TIMED_OUT'; // Specific status for timeout
+        }
+        // You might want to add more specific statuses based on other messages if they exist
 
-        await orderRef.update({ status: newStatus, callbackData: req.body });
-        console.log(`Updated order ${transactionReference} status to ${newStatus}`);
+        // Update the order status and save the full callback data in Firestore
+        await orderRef.update({
+            status: newStatus,
+            callbackData: callbackData, // Save the entire callback payload for debugging
+            infinitiPayCallbackStatus: transactionStatus,
+            infinitiPayCallbackMessage: transactionMessage,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`Updated order ${transactionReference} status to ${newStatus} based on InfinitiPay callback.`);
 
         // --- SEND EMAIL ON SUCCESSFUL PAYMENT ---
         if (newStatus === 'PAID') {
