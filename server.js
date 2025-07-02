@@ -161,7 +161,8 @@ app.post('/api/create-order', async (req, res) => {
             customerPhone: cleanedPhoneNumber, 
             transactionReference: orderRef.id, 
             callbackURL: process.env.YOUR_APP_CALLBACK_URL, 
-           
+            ptyId: 1, 
+            transactionTypeId: 1 
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
