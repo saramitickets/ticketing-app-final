@@ -158,9 +158,9 @@ app.post('/api/create-order', async (req, res) => {
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
-            customerPhone: cleanedPhoneNumber, 
+            payerAccount: cleanedPhoneNumber, 
             transactionReference: orderRef.id, 
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL, 
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL,
             ptyId: 1, 
             transactionTypeId: 1 
         };
