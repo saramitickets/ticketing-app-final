@@ -119,10 +119,6 @@ async function getInfinitiPayToken() {
     }
 }
 
-
-// --- API Endpoint for Creating an Order ---
-// This endpoint handles the initial booking request from the frontend,
-// creates an order in Firestore, and initiates an STK Push payment via InfinitiPay.
 app.post('/api/create-order', async (req, res) => {
     console.log('Received booking request at /api/create-order:', req.body);
     const { fullName, email, phone, amount, quantity, eventId, eventName } = req.body;
