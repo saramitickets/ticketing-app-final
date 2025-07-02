@@ -154,16 +154,14 @@ app.post('/api/create-order', async (req, res) => {
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
 
         const stkPushPayload = {
-            amount: String(amount), // Amount as string (assuming this is consistent with generateLink)
+            amount: amount, 
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
-            customerPhone: cleanedPhoneNumber, // Customer's phone number for STK Push
-            transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL, // URL where InfinitiPay sends status updates
-            // ptyId: 2 // This value caused "Invalid params" error.
-            // IMPORTANT: Replace with the correct 'ptyId' value provided by Peter.
-            // Example: ptyId: 'YOUR_CORRECT_PTY_ID_VALUE'
+            customerPhone: cleanedPhoneNumber, 
+            transactionReference: orderRef.id, 
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL, 
+           
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
