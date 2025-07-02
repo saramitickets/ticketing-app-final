@@ -108,7 +108,7 @@ async function getInfinitiPayToken() {
         console.log('New InfinitiPay token obtained via partner login.');
         return infinitiPayAccessToken;
     } catch (error) {
-        console.error('Error fetching InfinitiPay token:', error.message);
+        console.error('Error fetching InfinitiPay token:', error.message || 'Unknown error during token fetch.');
         // Log the full error response from InfinitiPay if available
         if (error.response && error.response.data) {
             console.error('InfinitiPay Auth Error Details:', JSON.stringify(error.response.data, null, 2));
@@ -154,14 +154,14 @@ app.post('/api/create-order', async (req, res) => {
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
 
         const stkPushPayload = {
-            amount: string(amount), // Amount as string (assuming this is consistent with generateLink)
+            amount: String(amount), // Amount as string (assuming this is consistent with generateLink)
             currency: "KES",
             description: `Tickets for ${eventName}`,
             merchantId: process.env.INFINITIPAY_MERCHANT_ID,
             customerPhone: cleanedPhoneNumber, // Customer's phone number for STK Push
             transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL ,// URL where InfinitiPay sends status updates
-            ptyId: 2
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL, // URL where InfinitiPay sends status updates
+            ptyId: 2 // Assuming '2' is the correct value for 'ptyId' based on previous context
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
@@ -208,11 +208,12 @@ app.post('/api/create-order', async (req, res) => {
         // If an order was created before the error, update its status to FAILED
         // Ensure that orderRef is defined before attempting to update it.
         if (orderRef) {
-            await orderRef.update({ status: 'FAILED', errorMessage: error.message }).catch(updateErr => {
+            await orderRef.update({ status: 'FAILED', errorMessage: error.message || 'Unknown error' }).catch(updateErr => {
                 console.error('Error updating order status to FAILED after STK Push attempt:', updateErr.message);
             });
         }
-        console.error('Error in /api/create-order endpoint:', error.message);
+        // --- PROPOSED CHANGE: Handle error.message being undefined ---
+        console.error('Error in /api/create-order endpoint:', error.message || 'Unknown error occurred.');
 
         // Log InfinitiPay's detailed error response
         if (axios.isAxiosError(error) && error.response && error.response.data) {
@@ -224,8 +225,9 @@ app.post('/api/create-order', async (req, res) => {
             });
         } else {
             // Handle other types of errors
-            res.status(500).json({ success: false, message: error.message, details: error.message });
+            res.status(500).json({ success: false, message: error.message || 'An unexpected error occurred.', details: error });
         }
+        // --- END PROPOSED CHANGE ---
     }
 });
 
@@ -312,7 +314,7 @@ app.use((err, req, res, next) => {
     res.status(500).json({
         success: false,
         message: 'An unexpected internal server error occurred.',
-        error: process.env.NODE_ENV === 'production' ? {} : { message: err.message, stack: err.stack }
+        error: process.env.NODE_ENV === 'production' ? {} : { message: err.message || 'Unknown error', stack: err.stack }
     });
 });
 
