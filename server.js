@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 require('dotenv').config(); // Load environment variables from .env file
+const crypto = require('crypto'); // Import crypto for generating UUIDs
 
 // --- FIREBASE DATABASE SETUP ---
 // Ensure serviceAccountKey.json is in the same directory as server.js
@@ -153,16 +154,20 @@ app.post('/api/create-order', async (req, res) => {
         // Ensure 'phone' from frontend is clean and in the required format.
         const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
 
+        // Extract last 3 digits of merchant ID
+        const fullMerchantId = process.env.INFINITIPAY_MERCHANT_ID;
+        const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : ''; // Gets last 3 digits or empty string
+
         const stkPushPayload = {
-            amount: amount, // Passed as a number (double)
-            currency: "KES",
-            description: `Tickets for ${eventName}`,
-            merchantId: process.env.INFINITIPAY_MERCHANT_ID,
-            payerAccount: cleanedPhoneNumber, // Changed from customerPhone to payerAccount as per Peter's instruction
+            transactionId: crypto.randomUUID(), // NEW: Generate a unique transaction ID for the request
             transactionReference: orderRef.id, // Use Firestore order ID as transaction reference
+            amount: amount, // Passed as a number (double)
+            merchantId: shortMerchantId, // UPDATED: Using last 3 digits as per Peter
+            transactionTypeId: 1,
+            payerAccount: cleanedPhoneNumber, // Changed from customerPhone to payerAccount
+            narration: `Tickets for ${eventName}`, // UPDATED: Changed from 'description' to 'narration'
             callbackURL: process.env.YOUR_APP_CALLBACK_URL, // URL where InfinitiPay sends status updates
-            ptyId: 1, // Added as per Peter's latest instruction
-            transactionTypeId: 1 // Added as per Peter's latest instruction
+            ptyId: 1 // Added as per Peter's latest instruction
         };
 
         console.log('Sending STK Push request with payload:', JSON.stringify(stkPushPayload, null, 2));
@@ -192,7 +197,7 @@ app.post('/api/create-order', async (req, res) => {
             // --- IMPORTANT CHANGE: Extract transactionId from results.ref ---
             const transactionId = infinitiPayResponse.data.results && infinitiPayResponse.data.results.ref
                                  ? infinitiPayResponse.data.results.ref
-                                 : infinitiPayResponse.data.transactionReference; // Fallback if structure changes or ref is missing
+                                 : stkPushPayload.transactionId; // Fallback to our generated ID if ref is missing
 
             if (transactionId) {
                 await orderRef.update({ infinitiPayTransactionId: transactionId, status: 'INITIATED_STK_PUSH' });
