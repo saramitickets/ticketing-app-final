@@ -252,22 +252,23 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
     console.log('Callback Content-Type:', req.headers['content-type']);
 
     let callbackData;
-    // Attempt to parse the raw body based on content type
-    if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
-        try {
-            callbackData = JSON.parse(req.body.toString());
-            console.log('Callback Body (Parsed JSON):', JSON.stringify(callbackData, null, 2));
-        } catch (parseError) {
-            console.error('Callback Error: Failed to parse JSON body.', parseError);
-            console.log('Callback Body (Raw - JSON parse failed):', req.body ? req.body.toString() : 'Empty raw body');
-            return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
+    // Attempt to parse the raw body based on content type, including text/plain
+    if (req.body) { // Ensure body is not null/undefined
+        const contentType = req.headers['content-type'];
+        if (contentType && (contentType.includes('application/json') || contentType.includes('text/plain'))) {
+            try {
+                callbackData = JSON.parse(req.body.toString());
+                console.log('Callback Body (Parsed JSON):', JSON.stringify(callbackData, null, 2));
+            } catch (parseError) {
+                console.error('Callback Error: Failed to parse JSON body.', parseError);
+                console.log('Callback Body (Raw - JSON parse failed):', req.body.toString());
+                return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
+            }
+        } else {
+            // If not JSON or text/plain, log the raw body as a string
+            console.log('Callback Body (Raw - Unsupported Content-Type):', req.body.toString());
+            return res.status(400).json({ success: false, message: 'Unsupported Content-Type or malformed body.' });
         }
-    } else if (req.body) {
-        // If not JSON, log the raw body as a string
-        console.log('Callback Body (Raw - Non-JSON):', req.body.toString());
-        // If it's not JSON, we might need to parse it differently or ask Peter for format.
-        // For now, assume it should be JSON based on previous samples, and return error if not.
-        return res.status(400).json({ success: false, message: 'Unsupported Content-Type or malformed body.' });
     } else {
         console.log('Callback Body: undefined or empty');
         return res.status(400).json({ success: false, message: 'Empty or undefined callback body.' });
