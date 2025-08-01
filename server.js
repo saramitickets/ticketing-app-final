@@ -1,4 +1,4 @@
-// Import necessary modules
+
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
