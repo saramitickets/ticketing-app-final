@@ -31,12 +31,25 @@ if (process.env.SENDGRID_API_KEY) {
 // --- Initialize Express app ---
 const app = express();
 
-// --- Middleware Setup ---
+// --- [UPDATED] Middleware Setup for CORS ---
+const allowedOrigins = ['https://saramievents.co.ke', 'https://www.saramievents.co.ke'];
+
 const corsOptions = {
-    origin: 'https://saramievents.co.ke', // Your frontend URL
-    optionsSuccessStatus: 200
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, etc.)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    }
 };
+
 app.use(cors(corsOptions));
+// --- END CORS Setup ---
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
