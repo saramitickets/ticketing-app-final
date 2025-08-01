@@ -33,14 +33,12 @@ if (process.env.SENDGRID_API_KEY) {
 // --- Initialize Express app ---
 const app = express();
 
-// --- [MODIFIED] Middleware Setup ---
-// Configure CORS to specifically allow your frontend domain
+// --- Middleware Setup ---
 const corsOptions = {
     origin: 'https://saramievents.co.ke', // Your frontend URL
     optionsSuccessStatus: 200 // For legacy browser support
 };
 app.use(cors(corsOptions));
-// --- END CORS Setup ---
 
 app.use(express.json()); // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded request bodies
@@ -97,16 +95,17 @@ async function getInfinitiPayToken() {
 // --- Create Order and Initiate STK Push Endpoint ---
 app.post('/api/create-order', async (req, res) => {
     console.log('Received booking request at /api/create-order:', req.body);
-    const { fullName, email, phone, amount, quantity, eventId, eventName } = req.body;
+    
+    const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
-    if (!fullName || !email || !phone || !amount || !eventId || !eventName || !quantity) {
+    if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName || !quantity) {
         return res.status(400).json({ success: false, message: 'Missing required booking information.' });
     }
 
     let orderRef;
     try {
         const orderData = {
-            fullName, email, phone, amount, quantity, eventId, eventName,
+            payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName,
             status: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             infinitiPayAssignedTxnId: null,
@@ -117,7 +116,7 @@ app.post('/api/create-order', async (req, res) => {
         console.log(`Successfully created order document with ID: ${firestoreOrderId}`);
 
         const token = await getInfinitiPayToken();
-        const cleanedPhoneNumber = phone.startsWith('0') ? '254' + phone.substring(1) : phone;
+        const cleanedPhoneNumber = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
         const fullMerchantId = process.env.INFINITIPAY_MERCHANT_ID;
         const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : '';
 
@@ -169,7 +168,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- InfinitiPay Callback Endpoint ---
+// --- [UPDATED TICKET DESIGN] InfinitiPay Callback Endpoint ---
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     console.log('--- Received InfinitiPay Callback ---');
     let callbackData;
@@ -249,64 +248,75 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
             console.log(`Preparing to send e-ticket for order ${foundFirestoreOrderId}...`);
             try {
                 const qrCodeDataURL = await qrcode.toDataURL(foundFirestoreOrderId);
+                
+                // Set the correct, non-placeholder event details
                 const eventDetails = {
-                    date: "January 1, 2026", // Placeholder
-                    time: "7:00 PM EAT",      // Placeholder
-                    venue: "Sarit Centre, Nairobi" // Placeholder
+                    date: "August 02, 2025",
+                    time: "6:00 PM EAT",   
+                    venue: "Lions Service Centre, Loresho" 
                 };
+                
+                // This is the new, redesigned HTML for the ticket
                 const emailHtml = `
                     <!DOCTYPE html>
                     <html lang="en">
                     <head>
                         <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>Your Ticket for ${orderData.eventName}</title>
                         <style>
-                            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
-                            .container { max-width: 420px; margin: auto; background: #ffffff; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.08); overflow: hidden; }
-                            .header { background-color: #111827; color: white; padding: 24px; text-align: center; }
-                            .header h1 { margin: 0; color: #d4af37; font-size: 26px; font-weight: 600; }
-                            .content { padding: 24px; }
-                            .content p { color: #4b5563; line-height: 1.6; margin: 0 0 16px 0; }
-                            .ticket-details { margin-top: 20px; border-top: 1px dashed #d1d5db; padding-top: 20px; font-size: 14px; }
-                            .ticket-details p { margin-bottom: 8px; }
-                            .ticket-details strong { color: #1f2937; }
-                            .qr-code { text-align: center; margin: 25px 0 10px 0; }
-                            .qr-code img { border: 6px solid #111827; border-radius: 8px; }
-                            .footer { text-align: center; padding: 20px; font-size: 12px; color: #6b7280; background-color: #f9fafb; }
+                            body { font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f7; margin: 0; padding: 20px; }
+                            .email-container { max-width: 650px; margin: auto; background: #ffffff; padding: 20px; }
+                            .greeting { font-size: 18px; color: #333; }
+                            .ticket-wrapper { margin-top: 20px; filter: drop-shadow(0 4px 15px rgba(0,0,0,0.1)); }
+                            .ticket-container { display: flex; max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; }
+                            .main-section { padding: 30px; flex-grow: 1; border-right: 2px dashed #d1d5db; }
+                            .event-title { color: #004d40; font-size: 24px; font-weight: 700; margin: 0; }
+                            .event-subtitle { color: #00796b; font-size: 16px; margin-top: 4px; }
+                            .details-grid { margin-top: 25px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+                            .detail-item p { margin: 0; color: #6b7280; font-size: 12px; }
+                            .detail-item strong { color: #111827; font-size: 14px; display: block; }
+                            .stub-section { padding: 20px; width: 160px; text-align: center; display: flex; flex-direction: column; justify-content: space-between; align-items: center; background-color: #f8f9fa; border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
+                            .stub-section .event-title-stub { color: #004d40; font-weight: 600; writing-mode: vertical-rl; transform: rotate(180deg); text-transform: uppercase; letter-spacing: 2px; }
+                            .qr-code img { max-width: 120px; border: 5px solid white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+                            .order-id { font-size: 10px; color: #6b7280; word-break: break-all; }
+                            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #9ca3af; }
                         </style>
                     </head>
                     <body>
-                        <div class="container">
-                            <div class="header"><h1>E-Ticket Confirmation</h1></div>
-                            <div class="content">
-                                <p><strong>Hi ${orderData.fullName},</strong></p>
-                                <p>Get ready for an amazing experience! Your ticket for <strong>${orderData.eventName}</strong> is confirmed.</p>
-                                <div class="ticket-details">
-                                    <p><strong>Attendee:</strong> ${orderData.fullName}</p>
-                                    <p><strong>Event:</strong> ${orderData.eventName}</p>
-                                    <p><strong>Date:</strong> ${eventDetails.date}</p>
-                                    <p><strong>Time:</strong> ${eventDetails.time}</p>
-                                    <p><strong>Venue:</strong> ${eventDetails.venue}</p>
-                                    <p><strong>Quantity:</strong> ${orderData.quantity}</p>
-                                    <p><strong>Order ID:</strong> ${foundFirestoreOrderId}</p>
-                                </div>
-                                <div class="qr-code">
-                                    <p style="color: #4b5563; font-weight: 500;">Scan this QR code at the entrance.</p>
-                                    <img src="${qrCodeDataURL}" alt="Your QR Code Ticket" />
+                        <div class="email-container">
+                            <p class="greeting">Hi ${orderData.payerName},</p>
+                            <p style="color: #555;">Your payment was successful! Here is your ticket for the event. Please have it ready for scanning at the entrance.</p>
+                            <div class="ticket-wrapper">
+                                <div class="ticket-container">
+                                    <div class="main-section">
+                                        <p class="event-subtitle">You're Invited To</p>
+                                        <h1 class="event-title">${orderData.eventName}</h1>
+                                        <div class="details-grid">
+                                            <div class="detail-item"><p>ATTENDEE</p><strong>${orderData.payerName}</strong></div>
+                                            <div class="detail-item"><p>QUANTITY</p><strong>${orderData.quantity} Ticket(s)</strong></div>
+                                            <div class="detail-item"><p>DATE</p><strong>${eventDetails.date}</strong></div>
+                                            <div class="detail-item"><p>TIME</p><strong>${eventDetails.time}</strong></div>
+                                            <div class="detail-item" style="grid-column: 1 / -1;"><p>VENUE</p><strong>${eventDetails.venue}</strong></div>
+                                        </div>
+                                    </div>
+                                    <div class="stub-section">
+                                        <div class="qr-code"><img src="${qrCodeDataURL}" alt="Ticket QR Code" /></div>
+                                        <p class="order-id">ID: ${foundFirestoreOrderId}</p>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="footer"><p>We look forward to seeing you there!<br>The Sarami Events Team</p></div>
+                             <div class="footer"><p>We look forward to seeing you there!<br>&copy; Sarami Events</p></div>
                         </div>
                     </body>
                     </html>`;
+
                 await sgMail.send({
-                    to: orderData.email,
+                    to: orderData.payerEmail,
                     from: process.env.SENDGRID_FROM_EMAIL,
-                    subject: `✨ Your Ticket to ${orderData.eventName} is Here!`,
+                    subject: `🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`,
                     html: emailHtml,
                 });
-                console.log(`E-Ticket sent successfully to: ${orderData.email}`);
+                console.log(`E-Ticket sent successfully to: ${orderData.payerEmail}`);
             } catch (error) {
                 console.error('Error during e-ticket generation or sending:', error);
                 if (error.response) console.error('SendGrid Error Body:', error.response.body);
