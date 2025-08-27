@@ -31,7 +31,7 @@ if (process.env.SENDGRID_API_KEY) {
 // --- Initialize Express app ---
 const app = express();
 
-// --- [UPDATED] Middleware Setup for CORS ---
+// --- Middleware Setup for CORS ---
 const allowedOrigins = [
     'https://saramievents.co.ke',
     'https://www.saramievents.co.ke',
@@ -39,20 +39,17 @@ const allowedOrigins = [
     'http://127.0.0.1:5500'
 ];
 
-const corsOptions = {
+app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, etc.)
         if (!origin) return callback(null, true);
-
         if (allowedOrigins.indexOf(origin) !== -1) {
-            return callback(null, true);
+            callback(null, true);
+        } else {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            callback(new Error(msg), false);
         }
-        const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-        return callback(new Error(msg), false);
     }
-};
-
-app.use(cors(corsOptions));
+}));
 // --- END CORS Setup ---
 
 app.use(express.json());
@@ -140,7 +137,6 @@ app.post('/api/create-order', async (req, res) => {
         );
 
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            // Check if transactionId exists before saving it
             const transactionId = infinitiPayResponse.data.transactionId || null; 
             const updateData = {
                 status: 'INITIATED_STK_PUSH',
@@ -205,14 +201,12 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         if (newStatus === 'PAID') {
             const orderData = orderDoc.data();
             
-            // Set the correct, non-placeholder event details
             const eventDetails = {
                 date: "September 25, 2025",
                 time: "6:30 PM",
                 venue: "Lions Service Centre, Loresho"
             };
             
-            // Redesigned HTML ticket without QR code
             const emailHtml = `
                 <!DOCTYPE html>
                 <html lang="en">
