@@ -140,16 +140,18 @@ app.post('/api/create-order', async (req, res) => {
         );
 
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
+            // Check if transactionId exists before saving it
+            const transactionId = infinitiPayResponse.data.transactionId || null; 
             const updateData = {
                 status: 'INITIATED_STK_PUSH',
-                infinitiPayTransactionId: infinitiPayResponse.data.transactionId // Save the transaction ID
+                infinitiPayTransactionId: transactionId 
             };
             await orderRef.update(updateData);
             res.status(200).json({
                 success: true,
                 message: 'STK Push initiated successfully.',
                 orderId: firestoreOrderId,
-                transactionId: infinitiPayResponse.data.transactionId // Send transaction ID to frontend
+                transactionId: transactionId 
             });
         } else {
             throw new Error(`STK Push failed. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
