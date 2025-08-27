@@ -7,7 +7,6 @@ require('dotenv').config(); // Load environment variables from .env file
 // --- FIREBASE DATABASE SETUP ---
 const admin = require('firebase-admin');
 try {
-    // Load credentials from environment variable
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
@@ -31,7 +30,7 @@ if (process.env.SENDGRID_API_KEY) {
 // --- Initialize Express app ---
 const app = express();
 
-// --- Middleware Setup for CORS ---
+// --- Middleware Setup for CORS and Body Parsing ---
 const allowedOrigins = [
     'https://saramievents.co.ke',
     'https://www.saramievents.co.ke',
@@ -50,10 +49,10 @@ app.use(cors({
         }
     }
 }));
-// --- END CORS Setup ---
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+// --- END Middleware Setup ---
 
 const PORT = process.env.PORT || 3000;
 
@@ -70,6 +69,7 @@ async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         return infinitiPayAccessToken;
     }
+    console.log('Fetching new InfinitiPay access token...');
     try {
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
@@ -88,6 +88,7 @@ async function getInfinitiPayToken() {
         infinitiPayAccessToken = accessToken;
         const expiresIn = response.data.expires_in || 3600;
         tokenExpiryTime = Date.now() + (expiresIn - 60) * 1000;
+        console.log('InfinitiPay access token fetched and stored.');
         return infinitiPayAccessToken;
     } catch (error) {
         console.error('Error fetching InfinitiPay token:', error.message);
@@ -99,7 +100,11 @@ async function getInfinitiPayToken() {
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
+    // Log the received request body for debugging
+    console.log('Received booking request for:', { payerName, payerPhone, amount, quantity });
+
     if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName || !quantity) {
+        console.error('Missing required booking information.');
         return res.status(400).json({ success: false, message: 'Missing required booking information.' });
     }
 
@@ -112,6 +117,7 @@ app.post('/api/create-order', async (req, res) => {
         };
         orderRef = await db.collection('orders').add(orderData);
         const firestoreOrderId = orderRef.id;
+        console.log(`New order created in Firestore with ID: ${firestoreOrderId}`);
 
         const token = await getInfinitiPayToken();
         const cleanedPhoneNumber = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
@@ -130,26 +136,33 @@ app.post('/api/create-order', async (req, res) => {
             ptyId: 1
         };
 
+        console.log('Initiating STK Push with payload:', stkPushPayload);
+
         const infinitiPayResponse = await axios.post(
             process.env.INFINITIPAY_STKPUSH_URL,
             stkPushPayload,
             { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
         );
 
+        console.log('InfinitiPay response:', infinitiPayResponse.data);
+
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            const transactionId = infinitiPayResponse.data.transactionId || null; 
+            const transactionId = infinitiPayResponse.data.transactionId || null;
             const updateData = {
                 status: 'INITIATED_STK_PUSH',
-                infinitiPayTransactionId: transactionId 
+                infinitiPayTransactionId: transactionId
             };
             await orderRef.update(updateData);
+            console.log(`Order ${firestoreOrderId} updated to INITIATED_STK_PUSH. InfinitiPay Transaction ID: ${transactionId}`);
+
             res.status(200).json({
                 success: true,
                 message: 'STK Push initiated successfully.',
                 orderId: firestoreOrderId,
-                transactionId: transactionId 
+                transactionId: transactionId
             });
         } else {
+            console.error('STK Push failed with status:', infinitiPayResponse.data.statusCode, 'and message:', infinitiPayResponse.data.message);
             throw new Error(`STK Push failed. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
         }
     } catch (error) {
@@ -165,17 +178,21 @@ app.post('/api/create-order', async (req, res) => {
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     let callbackData;
     try {
-        callbackData = JSON.parse(req.body.toString());
+        const rawBody = req.body.toString();
+        callbackData = JSON.parse(rawBody);
+        console.log('Received InfinitiPay callback:', callbackData);
     } catch (parseError) {
+        console.error('Error parsing InfinitiPay callback JSON:', parseError);
         return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
     }
 
     const { results, statusCode: transactionStatus } = callbackData;
-    const { merchantTxnId } = results;
+    const { merchantTxnId } = results || {}; // Add defensive check
     const firestoreOrderId = merchantTxnId;
     const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
 
     if (!firestoreOrderId) {
+        console.error('Callback received without transaction identifier.');
         return res.status(400).json({ success: false, message: 'Missing transaction identifier.' });
     }
 
@@ -184,8 +201,10 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         const orderDoc = await orderRef.get();
 
         if (!orderDoc.exists) {
+            console.error(`Order ID ${firestoreOrderId} not found for callback.`);
             return res.status(404).json({ success: false, message: 'Order not found for callback.' });
         }
+        console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
 
         let newStatus = 'FAILED';
         if (transactionStatus === 200 && transactionMessage?.toLowerCase().includes("success")) {
@@ -197,16 +216,16 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
             callbackData,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        console.log(`Order ${firestoreOrderId} updated to status: ${newStatus}`);
 
         if (newStatus === 'PAID') {
             const orderData = orderDoc.data();
-            
             const eventDetails = {
                 date: "September 25, 2025",
                 time: "6:30 PM",
                 venue: "Lions Service Centre, Loresho"
             };
-            
+
             const emailHtml = `
                 <!DOCTYPE html>
                 <html lang="en">
@@ -254,10 +273,11 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 subject: `🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`,
                 html: emailHtml,
             });
+            console.log(`Confirmation email sent to ${orderData.payerEmail} for order ${firestoreOrderId}`);
         }
         res.status(200).json({ success: true, message: 'Callback processed successfully.' });
     } catch (error) {
-        console.error(`Error processing callback:`, error);
+        console.error(`Error processing callback for order ${firestoreOrderId}:`, error);
         res.status(500).json({ success: false, message: 'Internal server error processing callback.' });
     }
 });
