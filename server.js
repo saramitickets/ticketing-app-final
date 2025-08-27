@@ -32,18 +32,23 @@ if (process.env.SENDGRID_API_KEY) {
 const app = express();
 
 // --- [UPDATED] Middleware Setup for CORS ---
-const allowedOrigins = ['https://saramievents.co.ke', 'https://www.saramievents.co.ke'];
+const allowedOrigins = [
+    'https://saramievents.co.ke',
+    'https://www.saramievents.co.ke',
+    'http://localhost:5500', 
+    'http://127.0.0.1:5500'
+];
 
 const corsOptions = {
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps, curl, etc.)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.indexOf(origin) === -1) {
-            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-            return callback(new Error(msg), false);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            return callback(null, true);
         }
-        return callback(null, true);
+        const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+        return callback(new Error(msg), false);
     }
 };
 
@@ -135,12 +140,16 @@ app.post('/api/create-order', async (req, res) => {
         );
 
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            const updateData = { status: 'INITIATED_STK_PUSH' };
+            const updateData = {
+                status: 'INITIATED_STK_PUSH',
+                infinitiPayTransactionId: infinitiPayResponse.data.transactionId // Save the transaction ID
+            };
             await orderRef.update(updateData);
             res.status(200).json({
                 success: true,
                 message: 'STK Push initiated successfully.',
-                orderId: firestoreOrderId
+                orderId: firestoreOrderId,
+                transactionId: infinitiPayResponse.data.transactionId // Send transaction ID to frontend
             });
         } else {
             throw new Error(`STK Push failed. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
@@ -196,8 +205,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
             
             // Set the correct, non-placeholder event details
             const eventDetails = {
-                date: "August 02, 2025",
-                time: "6:00 PM EAT",
+                date: "September 25, 2025",
+                time: "6:30 PM",
                 venue: "Lions Service Centre, Loresho"
             };
             
@@ -238,7 +247,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                             </div>
                             <div class="ticket-footer">Order ID: ${firestoreOrderId}</div>
                         </div>
-                         <div class="footer-text"><p>&copy; Sarami Events</p></div>
+                        <div class="footer-text"><p>&copy; Sarami Events</p></div>
                     </div>
                 </body>
                 </html>`;
