@@ -34,7 +34,7 @@ const app = express();
 const allowedOrigins = [
     'https://saramievents.co.ke',
     'https://www.saramievents.co.ke',
-    'http://localhost:5500', 
+    'http://localhost:5500',
     'http://127.0.0.1:5500'
 ];
 
@@ -147,7 +147,8 @@ app.post('/api/create-order', async (req, res) => {
         console.log('InfinitiPay response:', infinitiPayResponse.data);
 
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            const transactionId = infinitiPayResponse.data.transactionId || null;
+            // CORRECTED LINE: Access the correct field from the response
+            const transactionId = infinitiPayResponse.data.results?.paymentId || null;
             const updateData = {
                 status: 'INITIATED_STK_PUSH',
                 infinitiPayTransactionId: transactionId
@@ -186,9 +187,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
     }
 
-    const { results, statusCode: transactionStatus } = callbackData;
-    const { merchantTxnId } = results || {}; // Add defensive check
-    const firestoreOrderId = merchantTxnId;
+    // CORRECTED LINE: Extract 'ref' for the Firestore Order ID and 'paymentId' for the transaction ID
+    const { ref: firestoreOrderId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
     const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
 
     if (!firestoreOrderId) {
@@ -207,12 +207,14 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
 
         let newStatus = 'FAILED';
-        if (transactionStatus === 200 && transactionMessage?.toLowerCase().includes("success")) {
+        if (callbackData.statusCode === 200 && transactionMessage?.toLowerCase().includes("success")) {
             newStatus = 'PAID';
         }
 
+        // CORRECTED LINE: Update both the status and the InfinitiPay Transaction ID
         await orderRef.update({
             status: newStatus,
+            infinitiPayTransactionId, // Shorthand for infinitiPayTransactionId: infinitiPayTransactionId
             callbackData,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
