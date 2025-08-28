@@ -100,7 +100,6 @@ async function getInfinitiPayToken() {
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
-    // Log the received request body for debugging
     console.log('Received booking request for:', { payerName, payerPhone, amount, quantity });
 
     if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName || !quantity) {
@@ -147,7 +146,6 @@ app.post('/api/create-order', async (req, res) => {
         console.log('InfinitiPay response:', infinitiPayResponse.data);
 
         if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            // CORRECTED LINE: Access the correct field from the response
             const transactionId = infinitiPayResponse.data.results?.paymentId || null;
             const updateData = {
                 status: 'INITIATED_STK_PUSH',
@@ -187,12 +185,13 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
     }
 
-    // CORRECTED LINE: Extract 'ref' for the Firestore Order ID and 'paymentId' for the transaction ID
-    const { ref: firestoreOrderId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
+    // UPDATED: Check for both possible transaction ID keys to handle API inconsistencies.
+    const { ref, merchantTxnId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
+    const firestoreOrderId = ref || merchantTxnId;
     const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
 
     if (!firestoreOrderId) {
-        console.error('Callback received without transaction identifier.');
+        console.error('Callback received without a valid transaction identifier.');
         return res.status(400).json({ success: false, message: 'Missing transaction identifier.' });
     }
 
@@ -206,15 +205,15 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         }
         console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
 
-        let newStatus = 'FAILED';
+        let newStatus = 'FAILED'; // Default to FAILED
+        // Check for a successful payment status code and a success message.
         if (callbackData.statusCode === 200 && transactionMessage?.toLowerCase().includes("success")) {
             newStatus = 'PAID';
         }
 
-        // CORRECTED LINE: Update both the status and the InfinitiPay Transaction ID
         await orderRef.update({
             status: newStatus,
-            infinitiPayTransactionId, // Shorthand for infinitiPayTransactionId: infinitiPayTransactionId
+            infinitiPayTransactionId,
             callbackData,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
