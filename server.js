@@ -265,7 +265,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 </html>`;
 
             // --- MAILERSEND EMAIL SENDING LOGIC ---
-            const sentFrom = new Sender(process.env.MAILERSEND_FROM_EMAIL, "Sarami Events");
+            const sentFrom = new Sender("etickets@saramievents.co.ke", "Sarami Events");
             const recipients = [
                 new Recipient(orderData.payerEmail, orderData.payerName)
             ];
