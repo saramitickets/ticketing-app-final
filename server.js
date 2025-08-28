@@ -18,12 +18,16 @@ try {
 }
 const db = admin.firestore();
 
-// --- MAILERSEND EMAIL SETUP ---
-const { MailerSend, EmailParams, Sender, Recipient } = require("mailersend");
-const mailerSend = new MailerSend({
-    apiKey: process.env.MAILERSEND_API_KEY,
-});
-console.log('MailerSend client initialized.');
+// --- BREVO EMAIL SETUP ---
+const SibApiV3Sdk = require('sib-api-v3-sdk');
+const defaultClient = SibApiV3Sdk.ApiClient.instance;
+
+// Configure API key authorization: api-key
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = process.env.BREVO_API_KEY;
+
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+console.log('Brevo client initialized.');
 
 // --- Initialize Express app ---
 const app = express();
@@ -167,7 +171,7 @@ app.post('/api/create-order', async (req, res) => {
             await orderRef.update({ status: 'FAILED', errorMessage: error.message || 'Unknown error' });
         }
         console.error('Error in /api/create-order:', error.message);
-        res.status(500).json({ success: false, message: error.message || 'An unexpected error occurred.' });
+        res.status(500).json({ success: false, message: 'An unexpected error occurred.' });
     }
 });
 
@@ -264,23 +268,27 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 </body>
                 </html>`;
 
-            // --- MAILERSEND EMAIL SENDING LOGIC ---
-            const sentFrom = new Sender("etickets@saramievents.co.ke", "Sarami Events");
+            // --- BREVO EMAIL SENDING LOGIC ---
+            const sender = {
+                email: "etickets@saramievents.co.ke",
+                name: "Sarami Events"
+            };
             const recipients = [
-                new Recipient(orderData.payerEmail, orderData.payerName)
+                { email: orderData.payerEmail, name: orderData.payerName }
             ];
 
-            const emailParams = new EmailParams()
-                .setFrom(sentFrom)
-                .setTo(recipients)
-                .setSubject(`🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`)
-                .setHtml(emailHtml);
+            const sendSmtpEmail = {
+                sender: sender,
+                to: recipients,
+                subject: `🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`,
+                htmlContent: emailHtml
+            };
 
             try {
-                await mailerSend.email.send(emailParams);
-                console.log(`Confirmation email sent to ${orderData.payerEmail} for order ${firestoreOrderId}`);
+                await apiInstance.sendTransacEmail(sendSmtpEmail);
+                console.log(`Confirmation email sent with Brevo to ${orderData.payerEmail} for order ${firestoreOrderId}`);
             } catch (emailError) {
-                console.error(`Error sending email with MailerSend for order ${firestoreOrderId}:`, emailError);
+                console.error(`Error sending email with Brevo for order ${firestoreOrderId}:`, emailError.message);
             }
         }
         res.status(200).json({ success: true, message: 'Callback processed successfully.' });
