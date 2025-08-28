@@ -18,14 +18,12 @@ try {
 }
 const db = admin.firestore();
 
-// --- SENDGRID EMAIL SETUP ---
-const sgMail = require('@sendgrid/mail');
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    console.log('SendGrid API Key set.');
-} else {
-    console.warn('SENDGRID_API_KEY is not set. Email functionality is disabled.');
-}
+// --- MAILERSEND EMAIL SETUP ---
+const { MailerSend, EmailParams, Sender, Recipient } = require("mailersend");
+const mailerSend = new MailerSend({
+    apiKey: process.env.MAILERSEND_API_KEY,
+});
+console.log('MailerSend client initialized.');
 
 // --- Initialize Express app ---
 const app = express();
@@ -185,7 +183,6 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
     }
 
-    // UPDATED: Check for both possible transaction ID keys to handle API inconsistencies.
     const { ref, merchantTxnId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
     const firestoreOrderId = ref || merchantTxnId;
     const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
@@ -206,7 +203,6 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
 
         let newStatus = 'FAILED'; // Default to FAILED
-        // Check for a successful payment status code and a success message.
         if (callbackData.statusCode === 200 && transactionMessage?.toLowerCase().includes("success")) {
             newStatus = 'PAID';
         }
@@ -268,13 +264,24 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 </body>
                 </html>`;
 
-            await sgMail.send({
-                to: orderData.payerEmail,
-                from: process.env.SENDGRID_FROM_EMAIL,
-                subject: `🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`,
-                html: emailHtml,
-            });
-            console.log(`Confirmation email sent to ${orderData.payerEmail} for order ${firestoreOrderId}`);
+            // --- MAILERSEND EMAIL SENDING LOGIC ---
+            const sentFrom = new Sender(process.env.MAILERSEND_FROM_EMAIL, "Sarami Events");
+            const recipients = [
+                new Recipient(orderData.payerEmail, orderData.payerName)
+            ];
+
+            const emailParams = new EmailParams()
+                .setFrom(sentFrom)
+                .setTo(recipients)
+                .setSubject(`🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`)
+                .setHtml(emailHtml);
+
+            try {
+                await mailerSend.email.send(emailParams);
+                console.log(`Confirmation email sent to ${orderData.payerEmail} for order ${firestoreOrderId}`);
+            } catch (emailError) {
+                console.error(`Error sending email with MailerSend for order ${firestoreOrderId}:`, emailError);
+            }
         }
         res.status(200).json({ success: true, message: 'Callback processed successfully.' });
     } catch (error) {
