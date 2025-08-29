@@ -261,8 +261,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
@@ -362,7 +362,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
                         <div class="barcode">
                             <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=Code128&multiplebarcodes=false&unit=cm&dpi=96&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.05" alt="Ticket Barcode" />
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=Code128&multiplebarcodes=false&unit=cm&dpi=96&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.1" alt="Ticket Barcode" />
                             <p style="font-size: 12px; font-family: monospace; color: #333;">${firestoreOrderId}</p>
                         </div>
                     </div>
