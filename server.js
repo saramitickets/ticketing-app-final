@@ -227,7 +227,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 venue: "Lions Service Centre, Loresho"
             };
 
-            // Enhanced HTML for the new, elegant ticket design
+            // HTML for the new, elegant ticket design with QR code
             const emailHtml = `
             <!DOCTYPE html>
             <html lang="en">
@@ -322,8 +322,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                         text-align: center;
                     }
                     .barcode img {
-                        width: 200px;
-                        height: 50px;
+                        width: 200px; /* Adjust size for a good QR code display */
+                        height: 200px;
                     }
                 </style>
             </head>
@@ -362,7 +362,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
                         <div class="barcode">
                             <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)}&code=Code128&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.2" alt="Ticket Barcode" />
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)}&code=QRCode&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&bgcolor=%23ffffff&color=%23000000&size=10" alt="Ticket QR Code" />
                             <p style="font-size: 12px; font-family: monospace; color: #333;">${firestoreOrderId}</p>
                         </div>
                     </div>
