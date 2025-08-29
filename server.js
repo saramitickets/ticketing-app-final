@@ -192,7 +192,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
     const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
 
     if (!firestoreOrderId) {
-        console.error('Callback received without a valid transaction identifier.');
+        console.log('Callback received without a valid transaction identifier.');
         return res.status(400).json({ success: false, message: 'Missing transaction identifier.' });
     }
 
@@ -201,7 +201,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         const orderDoc = await orderRef.get();
 
         if (!orderDoc.exists) {
-            console.error(`Order ID ${firestoreOrderId} not found for callback.`);
+            console.log(`Order ID ${firestoreOrderId} not found for callback.`);
             return res.status(404).json({ success: false, message: 'Order not found for callback.' });
         }
         console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
@@ -362,7 +362,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
                         <div class="barcode">
                             <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)}&code=QRCode&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&bgcolor=%23ffffff&color=%23000000&size=10" alt="Ticket QR Code" />
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)},${encodeURIComponent(orderData.eventName)},${encodeURIComponent(orderData.payerName)}&code=QRCode&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&bgcolor=%23ffffff&color=%23000000&size=10" alt="Ticket QR Code" />
                             <p style="font-size: 12px; font-family: monospace; color: #333;">${firestoreOrderId}</p>
                         </div>
                     </div>
