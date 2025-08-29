@@ -227,46 +227,152 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                 venue: "Lions Service Centre, Loresho"
             };
 
+            // Enhanced HTML for the new, elegant ticket design
             const emailHtml = `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Your Ticket for ${orderData.eventName}</title>
-                    <style>
-                        body { font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f7; margin: 0; padding: 20px; }
-                        .email-wrapper { max-width: 600px; margin: auto; }
-                        .greeting { font-size: 18px; color: #333; }
-                        .ticket-container { margin-top: 20px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
-                        .ticket-header { background-color: #004d40; color: #d4af37; padding: 25px; text-align: center; }
-                        .ticket-header h1 { margin: 0; font-size: 26px; font-weight: 700; }
-                        .ticket-body { padding: 30px; }
-                        .detail-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
-                        .detail-item:last-child { border-bottom: none; }
-                        .detail-item p { margin: 0; color: #6b7280; font-size: 12px; text-transform: uppercase; }
-                        .detail-item strong { color: #111827; font-size: 15px; display: block; }
-                        .ticket-footer { background-color: #f8f9fa; padding: 15px 30px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; }
-                        .footer-text { margin-top: 30px; text-align: center; font-size: 12px; color: #9ca3af; }
-                    </style>
-                </head>
-                <body>
-                    <div class="email-wrapper">
-                        <p class="greeting">Hi ${orderData.payerName},</p>
-                        <p style="color: #555;">Your payment was successful! Your ticket for the event is confirmed.</p>
-                        <div class="ticket-container">
-                            <div class="ticket-header"><h1>${orderData.eventName}</h1></div>
-                            <div class="ticket-body">
-                                <div class="detail-item"><p>Attendee</p><strong>${orderData.payerName}</strong></div>
-                                <div class="detail-item"><p>Date & Time</p><strong>${eventDetails.date} at ${eventDetails.time}</strong></div>
-                                <div class="detail-item"><p>Venue</p><strong>${eventDetails.venue}</strong></div>
-                                <div class="detail-item"><p>Quantity</p><strong>${orderData.quantity} Ticket(s)</strong></div>
-                            </div>
-                            <div class="ticket-footer">Order ID: ${firestoreOrderId}</div>
-                        </div>
-                        <div class="footer-text"><p>&copy; Sarami Events</p></div>
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Your Exclusive Ticket to ${orderData.eventName}</title>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                        background-color: #f0f2f5;
+                        margin: 0;
+                        padding: 0;
+                        -webkit-font-smoothing: antialiased;
+                        -moz-osx-font-smoothing: grayscale;
+                    }
+                    .email-container {
+                        max-width: 600px;
+                        margin: 40px auto;
+                        padding: 0;
+                        background-color: #ffffff;
+                        border-radius: 10px;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                        overflow: hidden;
+                    }
+                    .header {
+                        background-color: #000000;
+                        color: #ffffff;
+                        padding: 20px;
+                        text-align: center;
+                        font-family: 'Times New Roman', Times, serif;
+                        position: relative;
+                        background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
+                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                    }
+                    .header h1 {
+                        margin: 0;
+                        font-size: 28px;
+                        font-weight: 700;
+                        color: #ffc107;
+                        letter-spacing: 1.5px;
+                        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+                    }
+                    .header h2 {
+                        margin: 5px 0 0;
+                        font-size: 18px;
+                        font-weight: 400;
+                        color: #f0f0f0;
+                    }
+                    .ticket-body {
+                        padding: 30px;
+                        color: #333333;
+                    }
+                    .ticket-info {
+                        background-color: #f9f9f9;
+                        border-radius: 8px;
+                        padding: 20px;
+                        margin-bottom: 20px;
+                        border: 1px solid #e0e0e0;
+                    }
+                    .info-row {
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 8px 0;
+                        border-bottom: 1px dashed #dcdcdc;
+                    }
+                    .info-row:last-child {
+                        border-bottom: none;
+                    }
+                    .info-label {
+                        font-size: 14px;
+                        color: #666666;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                    }
+                    .info-value {
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #111111;
+                    }
+                    .footer {
+                        text-align: center;
+                        padding: 20px 30px;
+                        background-color: #fafafa;
+                        border-top: 1px solid #e0e0e0;
+                        font-size: 12px;
+                        color: #999999;
+                    }
+                    .barcode {
+                        margin-top: 20px;
+                        text-align: center;
+                    }
+                    .barcode img {
+                        width: 200px;
+                        height: 50px;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="email-container">
+                    <div class="header">
+                        <h1>${orderData.eventName}</h1>
+                        <h2>A Special Gala for the International President</h2>
                     </div>
-                </body>
-                </html>`;
+                    <div class="ticket-body">
+                        <p style="font-size: 16px; margin-top: 0;">Dear ${orderData.payerName},</p>
+                        <p style="font-size: 14px; line-height: 1.5;">Congratulations! Your reservation for this prestigious event is confirmed. Please present this ticket at the entrance for admission.</p>
+
+                        <div class="ticket-info">
+                            <div class="info-row">
+                                <span class="info-label">Attendee Name</span>
+                                <span class="info-value">${orderData.payerName}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Date</span>
+                                <span class="info-value">${eventDetails.date}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Time</span>
+                                <span class="info-value">${eventDetails.time}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Venue</span>
+                                <span class="info-value">${eventDetails.venue}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Quantity</span>
+                                <span class="info-value">${orderData.quantity} Ticket(s)</span>
+                            </div>
+                        </div>
+
+                        <div class="barcode">
+                            <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=Code128&multiplebarcodes=false&unit=cm&dpi=96&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.04" alt="Ticket Barcode" />
+                            <p style="font-size: 12px; font-family: monospace; color: #333;">${firestoreOrderId}</p>
+                        </div>
+                    </div>
+                    <div class="footer">
+                        <p>Order ID: ${firestoreOrderId}</p>
+                        <p>&copy; Sarami Events. All rights reserved.</p>
+                    </div>
+                </div>
+            </body>
+            </html>`;
 
             // --- BREVO EMAIL SENDING LOGIC ---
             const sender = {
