@@ -362,7 +362,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
 
                         <div class="barcode">
                             <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=Code128&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.2 alt="Ticket Barcode" />
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)}&code=Code128&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&rotation=0&bgcolor=%23ffffff&color=%23000000&fontcolor=%23000000&quietzone=1&modulewidth=0.2" alt="Ticket Barcode" />
                             <p style="font-size: 12px; font-family: monospace; color: #333;">${firestoreOrderId}</p>
                         </div>
                     </div>
