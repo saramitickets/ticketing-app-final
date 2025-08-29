@@ -16,9 +16,9 @@
         :root {
             --primary-color-sarami: #004d40;
             --accent-color-sarami: #D4AF37;
-            --secondary-color-sarami: #00796b; 
+            --secondary-color-sarami: #00796b;
             --light-bg-sarami: #f8f9fa;
-            --white-color: #ffffff; 
+            --white-color: #ffffff;
             --font-body-sarami: 'Poppins', sans-serif;
             --error-color: #dc3545;
             --success-color: #28a745;
@@ -38,7 +38,7 @@
         }
         .loader {
             border: 4px solid rgba(0,0,0,0.1);
-            border-top: 4px solid var(--accent-color-sarami); 
+            border-top: 4px solid var(--accent-color-sarami);
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -56,8 +56,8 @@
         <div class="container mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-20">
                 <a href="Index.html" class="flex items-center space-x-3">
-                    <img src="SARAMI_EVENTS_LOGO-removebg-preview.png" alt="Sarami Events Logo" class="h-12 w-12 rounded-full border-2 border-[var(--accent-color-sarami)]" 
-                         onerror="this.onerror=null; this.src='https://placehold.co/60x60/004d40/D4AF37?text=SE&font=poppins';">
+                    <img src="SARAMI_EVENTS_LOGO-removebg-preview.png" alt="Sarami Events Logo" class="h-12 w-12 rounded-full border-2 border-[var(--accent-color-sarami)]"
+                            onerror="this.onerror=null; this.src='https://placehold.co/60x60/004d40/D4AF37?text=SE&font=poppins';">
                     <span class="text-2xl font-bold tracking-tight text-[var(--accent-color-sarami)]">Sarami Tickets</span>
                 </a>
                 <nav class="hidden md:flex space-x-6">
@@ -71,7 +71,7 @@
 
     <main class="py-8 md:py-12">
         <div class="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden md:flex">
-            
+
             <div class="md:w-1/2 bg-cover bg-center p-8 text-white" style="background-image: url('https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=800&q=80');">
                 <div class="flex flex-col justify-between h-full bg-black bg-opacity-50 p-6 rounded-lg min-h-[400px]">
                     <div>
@@ -104,7 +104,7 @@
                             <label for="email" class="block text-sm font-medium text-[var(--primary-color-sarami)]">Email Address</label>
                             <input type="email" id="email" name="email" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[var(--accent-color-sarami)] focus:border-[var(--accent-color-sarami)]">
                         </div>
-                         <div class="mt-4">
+                        <div class="mt-4">
                             <label for="phone" class="block text-sm font-medium text-[var(--primary-color-sarami)]">Phone Number (e.g., 07...)</label>
                             <input type="tel" id="phone" name="phone" required pattern="^(0\d{9}|254\d{9})$" placeholder="0712345678" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[var(--accent-color-sarami)] focus:border-[var(--accent-color-sarami)]">
                         </div>
@@ -120,7 +120,7 @@
                             <span>Total: KES </span>
                             <span id="total-price">6500</span>
                         </div>
-                         <div id="message-area" class="mt-4 text-sm"></div>
+                        <div id="message-area" class="mt-4 text-sm"></div>
 
                         <div class="mt-6">
                             <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-[var(--primary-color-sarami)] bg-[var(--accent-color-sarami)] hover:bg-[#B8860B] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--accent-color-sarami)] disabled:bg-gray-400 disabled:cursor-not-allowed">
@@ -131,28 +131,25 @@
                 </div>
 
                 <div id="ticket-section" class="hidden">
-                     <h2 class="text-2xl font-bold text-[var(--success-color)]">Booking Confirmed!</h2>
-                     <p class="text-gray-600 mt-1">Your ticket is ready. Please present this QR code at the event entrance.</p>
-                    
-                     <div class="mt-6 p-4 rounded-lg bg-gray-50 ticket">
-                         <div class="flex flex-col md:flex-row gap-4">
-                             <div id="qrcode" class="mx-auto md:mx-0"></div>
-                             <div>
-                                 <p class="text-lg font-bold text-[var(--primary-color-sarami)]" id="ticket-name"></p>
-                                 <p class="text-sm text-gray-600" id="ticket-email"></p>
-                                 <hr class="my-2">
-                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Event:</strong> Sarami Signature Gala 2025</p>
-                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Tickets:</strong> <span id="ticket-quantity"></span></p>
-                                 <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Order ID:</strong> <span id="ticket-order-id"></span></p>
-                             </div>
-                         </div>
-                     </div>
+                    <h2 class="text-2xl font-bold text-[var(--success-color)]">STK Push Initiated!</h2>
+                    <p class="text-gray-600 mt-1">Please check your phone for the M-Pesa STK Push prompt to complete the payment.</p>
 
-                     <div class="mt-6">
-                          <button onclick="window.print()" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--secondary-color-sarami)] hover:bg-[#005a4a]">
-                             Print Ticket
-                         </button>
-                     </div>
+                    <div class="mt-6 p-4 rounded-lg bg-gray-50 ticket">
+                        <p class="text-lg font-bold text-[var(--primary-color-sarami)]" id="ticket-stk-phone"></p>
+                        <p class="text-sm text-gray-600">Waiting for payment confirmation...</p>
+                        <hr class="my-2">
+                        <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Event:</strong> Sarami Signature Gala 2025</p>
+                        <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Tickets:</strong> <span id="ticket-quantity-display"></span></p>
+                        <p class="text-sm text-[var(--primary-color-sarami)]"><strong>Order ID:</strong> <span id="ticket-order-id-display"></span></p>
+                        <p class="text-sm text-[var(--primary-color-sarami)]"><strong>InfinitiPay Transaction ID:</strong> <span id="ticket-transaction-id-display"></span></p>
+                    </div>
+
+                    <div class="mt-6">
+                        <!-- Removed print ticket button for STK Push flow as QR code is not generated immediately -->
+                        <button onclick="location.reload()" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--secondary-color-sarami)] hover:bg-[#005a4a]">
+                            New Booking
+                        </button>
+                    </div>
                 </div>
 
             </div>
@@ -179,11 +176,11 @@
         const totalPriceEl = document.getElementById('total-price');
         const ticketForm = document.getElementById('ticket-form');
         const messageArea = document.getElementById('message-area');
-        
-        const bookingFormDiv = document.getElementById('booking-form');
-        const ticketSectionDiv = document.getElementById('ticket-section');
 
-        const TICKET_PRICE = 7500;
+        const bookingFormDiv = document.getElementById('booking-form');
+        const ticketSectionDiv = document.getElementById('ticket-section'); // Display section for STK Push initiation
+
+        const TICKET_PRICE = 7500; // Define ticket price
 
         // --- 1. Quantity and Price Calculation Logic ---
         function updatePrice() {
@@ -191,6 +188,9 @@
             const totalPrice = TICKET_PRICE * quantity;
             totalPriceEl.textContent = totalPrice.toLocaleString();
         }
+
+        // Initialize price on load
+        updatePrice();
 
         minusBtn.addEventListener('click', () => {
             let quantity = parseInt(quantityInput.value);
@@ -218,19 +218,18 @@
                 phone: formData.get('phone'),
                 quantity: parseInt(formData.get('quantity')),
                 amount: TICKET_PRICE * parseInt(formData.get('quantity')),
-                eventId: 'gala2025', 
+                eventId: 'gala2025',
                 eventName: 'Sarami Signature Gala 2025'
             };
             await handleBooking(bookingDetails);
         });
 
-        // --- 3. Backend Communication and Flow Control ---
+        // --- 3. Backend Communication and STK Push Flow Control ---
         async function handleBooking(bookingDetails) {
-            setLoadingState(true, 'Connecting to payment provider...');
+            setLoadingState(true, 'Initiating M-Pesa STK Push...');
 
             try {
-                // --- THIS IS THE LIVE FETCH CALL TO YOUR BACKEND ---
-                const backendUrl = 'http://localhost:3000/api/create-order';
+                const backendUrl = 'https://ticketing-app-final.onrender.com/api/create-order';
 
                 const response = await fetch(backendUrl, {
                     method: 'POST',
@@ -240,59 +239,43 @@
 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.message || 'An unknown error occurred.');
+                    throw new Error(errorData.message || 'An unknown error occurred on backend.');
                 }
-                
+
                 const backendResponse = await response.json();
-                
-                // --- SUCCESS! REDIRECT TO THE PAYMENT GATEWAY ---
-                if (backendResponse.success && backendResponse.paymentGatewayUrl) {
-                    console.log(`Redirecting to: ${backendResponse.paymentGatewayUrl}`);
-                    messageArea.innerHTML = `<div class="text-[var(--success-color)] font-medium">Success! Redirecting you to the payment page...</div>`;
-                    window.location.href = backendResponse.paymentGatewayUrl;
+
+                // --- SUCCESS! STK Push initiated ---
+                if (backendResponse.success) {
+                    console.log(`STK Push initiated successfully. Transaction ID: ${backendResponse.transactionId}`);
+                    // Display success message and STK Push details
+                    showStkPushSuccess(bookingDetails, backendResponse.orderId, backendResponse.transactionId);
+                    setLoadingState(false, 'STK Push sent. Check your phone!', false); // Clear loader, show success message
                 } else {
-                    throw new Error('Could not retrieve payment URL from the server.');
+                    throw new Error(backendResponse.message || 'STK Push initiation failed.');
                 }
 
             } catch (error) {
                 console.error("Booking Error:", error);
-                setLoadingState(false, error.message, true);
+                setLoadingState(false, error.message, true); // Display error message
             }
         }
-        
-        // --- 4. Ticket and QR Code Display (For future use) ---
-        function showTicket(ticketData) {
+
+        // --- 4. Display STK Push Success Message ---
+        function showStkPushSuccess(bookingDetails, orderId, transactionId) {
             bookingFormDiv.style.display = 'none';
-            ticketSectionDiv.classList.remove('hidden');
+            ticketSectionDiv.classList.remove('hidden'); // Show the dedicated STK push success section
 
-            document.getElementById('ticket-name').textContent = ticketData.fullName;
-            document.getElementById('ticket-email').textContent = ticketData.email;
-            document.getElementById('ticket-quantity').textContent = ticketData.quantity;
-            document.getElementById('ticket-order-id').textContent = ticketData.orderId;
-
-            const qrCodeData = JSON.stringify({
-                orderId: ticketData.orderId,
-                name: ticketData.fullName,
-                event: ticketData.eventId
-            });
-            
-            try {
-                const typeNumber = 4;
-                const errorCorrectionLevel = 'L';
-                const qr = qrcode(typeNumber, errorCorrectionLevel);
-                qr.addData(qrCodeData);
-                qr.make();
-                document.getElementById('qrcode').innerHTML = qr.createImgTag(5, 8);
-            } catch (e) {
-                console.error("QR Code generation failed:", e);
-                document.getElementById('qrcode').innerHTML = "<p class='text-[var(--error-color)] text-xs'>Could not generate QR code.</p>";
-            }
+            document.getElementById('ticket-stk-phone').textContent = `M-Pesa to: ${bookingDetails.phone}`;
+            document.getElementById('ticket-quantity-display').textContent = bookingDetails.quantity;
+            document.getElementById('ticket-order-id-display').textContent = orderId;
+            document.getElementById('ticket-transaction-id-display').textContent = transactionId;
+            // QR code functionality is typically not for STK Push, so it's removed from this flow.
         }
 
         // --- 5. UI Helper for Loading/Error Messages ---
         function setLoadingState(isLoading, message = '', isError = false) {
             const submitButton = ticketForm.querySelector('button[type="submit"]');
-            
+
             if (isLoading) {
                 messageArea.innerHTML = `<div class="flex items-center text-[var(--secondary-color-sarami)]"><div class="loader mr-2"></div><span>${message}</span></div>`;
                 messageArea.className = 'mt-4 text-sm';
@@ -308,6 +291,7 @@
             }
         }
 
+        // Set current year in footer
         document.getElementById('current-year').textContent = new Date().getFullYear();
     </script>
 

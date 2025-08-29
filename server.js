@@ -2,56 +2,95 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-require('dotenv').config();
+require('dotenv').config(); // Load environment variables from .env file
 
 // --- FIREBASE DATABASE SETUP ---
 const admin = require('firebase-admin');
-const serviceAccount = require('./serviceAccountKey.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('Firebase Admin SDK initialized successfully.');
+} catch (error) {
+    console.error('Error initializing Firebase Admin SDK:', error.message);
+    process.exit(1);
+}
 const db = admin.firestore();
 
-// --- SENDGRID EMAIL SETUP ---
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-// --- END SENDGRID SETUP ---
+// --- BREVO EMAIL SETUP ---
+const SibApiV3Sdk = require('sib-api-v3-sdk');
+const defaultClient = SibApiV3Sdk.ApiClient.instance;
 
+// Configure API key authorization: api-key
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = process.env.BREVO_API_KEY;
 
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+console.log('Brevo client initialized.');
+
+// --- Initialize Express app ---
 const app = express();
-app.use(cors());
+
+// --- Middleware Setup for CORS and Body Parsing ---
+const allowedOrigins = [
+    'https://saramievents.co.ke',
+    'https://www.saramievents.co.ke',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500'
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            callback(new Error(msg), false);
+        }
+    }
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+// --- END Middleware Setup ---
 
 const PORT = process.env.PORT || 3000;
 
 // --- Test Route ---
 app.get('/', (req, res) => {
-    res.send('Sarami Ticketing Backend is running!');
+    res.status(200).send('Sarami Ticketing Backend is running!');
 });
 
-// --- InfinitiPay Authentication Function (omitted for brevity, no changes) ---
+// --- InfinitiPay Authentication Function ---
 let infinitiPayAccessToken = null;
 let tokenExpiryTime = null;
 
 async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
-        console.log('Using cached InfinitiPay token');
         return infinitiPayAccessToken;
     }
-    console.log('Fetching new InfinitiPay token using PARTNER LOGIN...');
+    console.log('Fetching new InfinitiPay access token...');
     try {
         const authPayload = {
-            username: process.env.INFINITIPAY_CLIENT_USERNAME,
-            password: process.env.INFINITIPAY_CLIENT_PASSWORD
+            client_id: process.env.INFINITIPAY_CLIENT_ID,
+            client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
+            grant_type: 'password',
+            username: process.env.INFINITIPAY_MERCHANT_USERNAME,
+            password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
-        const response = await axios.post(process.env.INFINITIPAY_AUTH_URL, authPayload, { headers: { 'Content-Type': 'application/json' } });
+        const response = await axios.post(
+            process.env.INFINITIPAY_AUTH_URL,
+            authPayload,
+            { headers: { 'Content-Type': 'application/json' } }
+        );
         const accessToken = response.data.token || response.data.access_token;
-        if (!accessToken) { throw new Error('Access Token not found in partner login response.'); }
+        if (!accessToken) throw new Error('Access Token not found in partner login response.');
         infinitiPayAccessToken = accessToken;
         const expiresIn = response.data.expires_in || 3600;
         tokenExpiryTime = Date.now() + (expiresIn - 60) * 1000;
-        console.log('New InfinitiPay token obtained via partner login.');
+        console.log('InfinitiPay access token fetched and stored.');
         return infinitiPayAccessToken;
     } catch (error) {
         console.error('Error fetching InfinitiPay token:', error.message);
@@ -59,102 +98,216 @@ async function getInfinitiPayToken() {
     }
 }
 
-
-// --- API Endpoint for Creating an Order ---
+// --- Create Order and Initiate STK Push Endpoint ---
 app.post('/api/create-order', async (req, res) => {
-    console.log('Received booking request at /api/create-order:', req.body);
-    const { fullName, email, phone, amount, quantity, eventId, eventName } = req.body;
+    const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
-    if (!fullName || !email || !phone || !amount || !eventId || !eventName || !quantity) {
+    console.log('Received booking request for:', { payerName, payerPhone, amount, quantity });
+
+    if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName || !quantity) {
+        console.error('Missing required booking information.');
         return res.status(400).json({ success: false, message: 'Missing required booking information.' });
     }
 
     let orderRef;
     try {
-        console.log('Creating PENDING order in Firestore...');
-        const orderData = { fullName, email, phone, amount, quantity, eventId, eventName, status: 'PENDING', createdAt: admin.firestore.FieldValue.serverTimestamp(), infinitiPayCheckoutId: null };
+        const orderData = {
+            payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName,
+            status: 'PENDING',
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
         orderRef = await db.collection('orders').add(orderData);
-        console.log(`Successfully created order document with ID: ${orderRef.id}`);
+        const firestoreOrderId = orderRef.id;
+        console.log(`New order created in Firestore with ID: ${firestoreOrderId}`);
+
         const token = await getInfinitiPayToken();
-        const paymentLinkPayload = { amount: String(amount), currency: "KES", description: `Tickets for ${eventName}`, merchantId: process.env.INFINITIPAY_MERCHANT_ID, transactionReference: orderRef.id, customerName: fullName, callbackURL: process.env.YOUR_APP_CALLBACK_URL };
-        const infinitiPayResponse = await axios.post(process.env.INFINITIPAY_GENERATE_LINK_URL, paymentLinkPayload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
-        const checkoutId = infinitiPayResponse.data.checkoutId;
-        if (infinitiPayResponse.data.statusCode === 200 && checkoutId) {
-            const paymentGatewayUrl = `https://dtbx-infinitilite-dashboard-v2-client-uat.azurewebsites.net/checkout/${checkoutId}`;
-            await orderRef.update({ infinitiPayCheckoutId: checkoutId });
-            res.status(200).json({ success: true, message: 'Order created, proceed to payment.', paymentGatewayUrl, orderId: orderRef.id });
+        const cleanedPhoneNumber = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
+        const fullMerchantId = process.env.INFINITIPAY_MERCHANT_ID;
+        const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : '';
+
+        const stkPushPayload = {
+            transactionId: firestoreOrderId,
+            transactionReference: firestoreOrderId,
+            amount,
+            merchantId: shortMerchantId,
+            transactionTypeId: 1,
+            payerAccount: cleanedPhoneNumber,
+            narration: `Tickets for ${eventName}`,
+            callbackURL: process.env.YOUR_APP_CALLBACK_URL,
+            ptyId: 1
+        };
+
+        console.log('Initiating STK Push with payload:', stkPushPayload);
+
+        const infinitiPayResponse = await axios.post(
+            process.env.INFINITIPAY_STKPUSH_URL,
+            stkPushPayload,
+            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        );
+
+        console.log('InfinitiPay response:', infinitiPayResponse.data);
+
+        if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
+            const transactionId = infinitiPayResponse.data.results?.paymentId || null;
+            const updateData = {
+                status: 'INITIATED_STK_PUSH',
+                infinitiPayTransactionId: transactionId
+            };
+            await orderRef.update(updateData);
+            console.log(`Order ${firestoreOrderId} updated to INITIATED_STK_PUSH. InfinitiPay Transaction ID: ${transactionId}`);
+
+            res.status(200).json({
+                success: true,
+                message: 'STK Push initiated successfully.',
+                orderId: firestoreOrderId,
+                transactionId: transactionId
+            });
         } else {
-            throw new Error(`Failed to process payment with provider. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
+            console.error('STK Push failed with status:', infinitiPayResponse.data.statusCode, 'and message:', infinitiPayResponse.data.message);
+            throw new Error(`STK Push failed. Response: ${JSON.stringify(infinitiPayResponse.data)}`);
         }
     } catch (error) {
-        if (orderRef) { await orderRef.update({ status: 'FAILED', errorMessage: error.message }); }
-        console.error('Error in /api/create-order endpoint:', error.message);
-        res.status(500).json({ success: false, message: error.message, details: error.message });
+        if (orderRef) {
+            await orderRef.update({ status: 'FAILED', errorMessage: error.message || 'Unknown error' });
+        }
+        console.error('Error in /api/create-order:', error.message);
+        res.status(500).json({ success: false, message: 'An unexpected error occurred.' });
     }
 });
 
-
 // --- InfinitiPay Callback Endpoint ---
-app.post('/api/infinitipay-callback', async (req, res) => {
-    console.log('--- Received InfinitiPay Callback ---');
-    console.log('Callback Body:', JSON.stringify(req.body, null, 2));
-    const { transactionReference, transactionStatus } = req.body;
-    if (!transactionReference) {
-        return res.status(400).json({ success: false, message: 'Missing transactionReference.' });
-    }
+app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
+    let callbackData;
     try {
-        const orderRef = db.collection('orders').doc(transactionReference);
-        const orderDoc = await orderRef.get();
-        if (!orderDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Order not found.' });
-        }
-        let newStatus = ['COMPLETED', 'SUCCESS', 'PAID'].includes((transactionStatus || '').toUpperCase()) ? 'PAID' : 'FAILED';
-        await orderRef.update({ status: newStatus, callbackData: req.body });
-        console.log(`Updated order ${transactionReference} status to ${newStatus}`);
+        const rawBody = req.body.toString();
+        callbackData = JSON.parse(rawBody);
+        console.log('Received InfinitiPay callback:', callbackData);
+    } catch (parseError) {
+        console.error('Error parsing InfinitiPay callback JSON:', parseError);
+        return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
+    }
 
-        // --- SEND EMAIL ON SUCCESSFUL PAYMENT ---
+    const { ref, merchantTxnId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
+    const firestoreOrderId = ref || merchantTxnId;
+    const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
+
+    if (!firestoreOrderId) {
+        console.error('Callback received without a valid transaction identifier.');
+        return res.status(400).json({ success: false, message: 'Missing transaction identifier.' });
+    }
+
+    try {
+        const orderRef = db.collection('orders').doc(firestoreOrderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            console.error(`Order ID ${firestoreOrderId} not found for callback.`);
+            return res.status(404).json({ success: false, message: 'Order not found for callback.' });
+        }
+        console.log(`Processing callback for Order ID: ${firestoreOrderId}`);
+
+        let newStatus = 'FAILED'; // Default to FAILED
+        if (callbackData.statusCode === 200 && transactionMessage?.toLowerCase().includes("success")) {
+            newStatus = 'PAID';
+        }
+
+        await orderRef.update({
+            status: newStatus,
+            infinitiPayTransactionId,
+            callbackData,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`Order ${firestoreOrderId} updated to status: ${newStatus}`);
+
         if (newStatus === 'PAID') {
             const orderData = orderDoc.data();
-            console.log(`Payment successful for order ${transactionReference}. Sending email receipt...`);
-            
-            const emailMsg = {
-                to: orderData.email, // The customer's email address
-                from: process.env.SENDGRID_FROM_EMAIL, // Your verified sender email
-                subject: `Your Ticket for ${orderData.eventName}`,
-                html: `
-                    <h1>Thank you for your order!</h1>
-                    <p>Hi ${orderData.fullName},</p>
-                    <p>Your booking is confirmed. Here are your ticket details:</p>
-                    <ul>
-                        <li><strong>Order ID:</strong> ${transactionReference}</li>
-                        <li><strong>Event:</strong> ${orderData.eventName}</li>
-                        <li><strong>Quantity:</strong> ${orderData.quantity}</li>
-                        <li><strong>Total Amount:</strong> KES ${orderData.amount.toLocaleString()}</li>
-                    </ul>
-                    <p>We look forward to seeing you there!</p>
-                    <p>Sincerely,<br>The Sarami Events Team</p>
-                `,
+            const eventDetails = {
+                date: "September 25, 2025",
+                time: "6:30 PM",
+                venue: "Lions Service Centre, Loresho"
+            };
+
+            const emailHtml = `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Your Ticket for ${orderData.eventName}</title>
+                    <style>
+                        body { font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f7; margin: 0; padding: 20px; }
+                        .email-wrapper { max-width: 600px; margin: auto; }
+                        .greeting { font-size: 18px; color: #333; }
+                        .ticket-container { margin-top: 20px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+                        .ticket-header { background-color: #004d40; color: #d4af37; padding: 25px; text-align: center; }
+                        .ticket-header h1 { margin: 0; font-size: 26px; font-weight: 700; }
+                        .ticket-body { padding: 30px; }
+                        .detail-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+                        .detail-item:last-child { border-bottom: none; }
+                        .detail-item p { margin: 0; color: #6b7280; font-size: 12px; text-transform: uppercase; }
+                        .detail-item strong { color: #111827; font-size: 15px; display: block; }
+                        .ticket-footer { background-color: #f8f9fa; padding: 15px 30px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; }
+                        .footer-text { margin-top: 30px; text-align: center; font-size: 12px; color: #9ca3af; }
+                    </style>
+                </head>
+                <body>
+                    <div class="email-wrapper">
+                        <p class="greeting">Hi ${orderData.payerName},</p>
+                        <p style="color: #555;">Your payment was successful! Your ticket for the event is confirmed.</p>
+                        <div class="ticket-container">
+                            <div class="ticket-header"><h1>${orderData.eventName}</h1></div>
+                            <div class="ticket-body">
+                                <div class="detail-item"><p>Attendee</p><strong>${orderData.payerName}</strong></div>
+                                <div class="detail-item"><p>Date & Time</p><strong>${eventDetails.date} at ${eventDetails.time}</strong></div>
+                                <div class="detail-item"><p>Venue</p><strong>${eventDetails.venue}</strong></div>
+                                <div class="detail-item"><p>Quantity</p><strong>${orderData.quantity} Ticket(s)</strong></div>
+                            </div>
+                            <div class="ticket-footer">Order ID: ${firestoreOrderId}</div>
+                        </div>
+                        <div class="footer-text"><p>&copy; Sarami Events</p></div>
+                    </div>
+                </body>
+                </html>`;
+
+            // --- BREVO EMAIL SENDING LOGIC ---
+            const sender = {
+                email: "etickets@saramievents.co.ke",
+                name: "Sarami Events"
+            };
+            const recipients = [
+                { email: orderData.payerEmail, name: orderData.payerName }
+            ];
+
+            const sendSmtpEmail = {
+                sender: sender,
+                to: recipients,
+                subject: `🎟️ Your Ticket to ${orderData.eventName} is Confirmed!`,
+                htmlContent: emailHtml
             };
 
             try {
-                await sgMail.send(emailMsg);
-                console.log('Email receipt sent successfully to:', orderData.email);
+                await apiInstance.sendTransacEmail(sendSmtpEmail);
+                console.log(`Confirmation email sent with Brevo to ${orderData.payerEmail} for order ${firestoreOrderId}`);
             } catch (emailError) {
-                console.error('Error sending email via SendGrid:', emailError.response ? emailError.response.body : emailError);
-                // We don't stop the process if the email fails, just log it.
+                console.error(`Error sending email with Brevo for order ${firestoreOrderId}:`, emailError.message);
             }
         }
-        // --- END EMAIL LOGIC ---
-
         res.status(200).json({ success: true, message: 'Callback processed successfully.' });
     } catch (error) {
-        console.error(`Error processing callback for order ${transactionReference}:`, error);
+        console.error(`Error processing callback for order ${firestoreOrderId}:`, error);
         res.status(500).json({ success: false, message: 'Internal server error processing callback.' });
     }
 });
 
+// --- Generic Error Handling Middleware ---
+app.use((err, req, res, next) => {
+    console.error('Unhandled server error:', err.stack);
+    res.status(500).json({
+        success: false,
+        message: 'An unexpected internal server error occurred.'
+    });
+});
 
 // --- Start the Server ---
 app.listen(PORT, () => {
-    console.log(`Sarami Ticketing Backend server is running on http://localhost:${PORT}`);
+    console.log(`Sarami Ticketing Backend server is running on port ${PORT}`);
 });
