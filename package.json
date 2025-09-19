@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
   "start": "node index.js",
-  "install-puppeteer": "npx puppeteer browsers install chromium@stable"
+  "install-puppeteer": "npx puppeteer browsers install chromium@latest"
 },
   "keywords": [],
   "author": "",
