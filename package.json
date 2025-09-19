@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "start": "node index.js",
+  "install-puppeteer": "npx puppeteer browsers install chromium@latest"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -16,6 +17,7 @@
     "express": "^5.1.0",
     "firebase-admin": "^13.4.0",
     "sib-api-v3-sdk": "^8.5.0",
-    "@getbrevo/brevo": "^3.0.1"
+    "@getbrevo/brevo": "^3.0.1",
+    "puppeteer": "^22.0.0"
   }
 }
