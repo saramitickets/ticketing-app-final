@@ -2,7 +2,7 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const puppeteer = require('puppeteer'); // <-- ADDED
+const puppeteer = require('puppeteer');
 require('dotenv').config(); // Load environment variables from .env file
 
 // --- FIREBASE DATABASE SETUP ---
@@ -262,8 +262,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
@@ -462,8 +462,8 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
@@ -577,8 +577,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         // --- END TICKET HTML CONTENT RECREATION ---
 
         // Launch a headless browser for PDF generation
-        const browser = await puppeteer.launch({ 
-            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        const browser = await puppeteer.launch({
+            executablePath: puppeteer.executablePath(),
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         const page = await browser.newPage();
 
