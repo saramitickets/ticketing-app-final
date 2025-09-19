@@ -2,6 +2,7 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const puppeteer = require('puppeteer'); // <-- ADDED
 require('dotenv').config(); // Load environment variables from .env file
 
 // --- FIREBASE DATABASE SETUP ---
@@ -71,7 +72,7 @@ async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         return infinitiPayAccessToken;
     }
-    console.log('Fetching new InfinitiPay access token...');
+    console.log('Fetching new InfinitiPay access token...  ');
     try {
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
@@ -261,8 +262,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
@@ -403,6 +404,213 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         res.status(500).json({ success: false, message: 'Internal server error processing callback.' });
     }
 });
+
+// --- NEW ENDPOINT TO GENERATE PDF TICKET (FOR ADMIN) ---
+app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
+    const { orderId } = req.params;
+
+    try {
+        const orderRef = db.collection('orders').doc(orderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            console.log(`PDF request: Order ID ${orderId} not found.`);
+            return res.status(404).json({ success: false, message: 'Order not found.' });
+        }
+
+        const orderData = orderDoc.data();
+        
+        // **NOTE:** These details must match the fixed event details in your main callback logic.
+        const eventDetails = {
+            date: "September 25, 2025",
+            time: "6:30 PM",
+            venue: "Lions Service Centre, Loresho"
+        };
+        
+        // --- TICKET HTML CONTENT RECREATION ---
+        // This is a copy of the HTML from the /api/infinitipay-callback route
+        const emailHtml = `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Your Exclusive Ticket to ${orderData.eventName}</title>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                        background-color: #f0f2f5;
+                        margin: 0;
+                        padding: 0;
+                        -webkit-font-smoothing: antialiased;
+                        -moz-osx-font-smoothing: grayscale;
+                    }
+                    .email-container {
+                        max-width: 600px;
+                        margin: 40px auto;
+                        padding: 0;
+                        background-color: #ffffff;
+                        border-radius: 10px;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                        overflow: hidden;
+                    }
+                    .header {
+                        background-color: #000000;
+                        color: #ffffff;
+                        padding: 20px;
+                        text-align: center;
+                        font-family: 'Times New Roman', Times, serif;
+                        position: relative;
+                        background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
+                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                    }
+                    .header h1 {
+                        margin: 0;
+                        font-size: 28px;
+                        font-weight: 700;
+                        color: #ffc107;
+                        letter-spacing: 1.5px;
+                        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+                    }
+                    .header h2 {
+                        margin: 5px 0 0;
+                        font-size: 18px;
+                        font-weight: 400;
+                        color: #f0f0f0;
+                    }
+                    .ticket-body {
+                        padding: 30px;
+                        color: #333333;
+                    }
+                    .ticket-info {
+                        background-color: #f9f9f9;
+                        border-radius: 8px;
+                        padding: 20px;
+                        margin-bottom: 20px;
+                        border: 1px solid #e0e0e0;
+                    }
+                    .info-row {
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 8px 0;
+                        border-bottom: 1px dashed #dcdcdc;
+                    }
+                    .info-row:last-child {
+                        border-bottom: none;
+                    }
+                    .info-label {
+                        font-size: 14px;
+                        color: #666666;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                    }
+                    .info-value {
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #111111;
+                    }
+                    .footer {
+                        text-align: center;
+                        padding: 20px 30px;
+                        background-color: #fafafa;
+                        border-top: 1px solid #e0e0e0;
+                        font-size: 12px;
+                        color: #999999;
+                    }
+                    .barcode {
+                        margin-top: 20px;
+                        text-align: center;
+                    }
+                    .barcode img {
+                        width: 200px; /* Adjust size for a good QR code display */
+                        height: 200px;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="email-container">
+                    <div class="header">
+                        <h1>${orderData.eventName}</h1>
+                        <h2>A Special Gala for the International President</h2>
+                    </div>
+                    <div class="ticket-body">
+                        <p style="font-size: 16px; margin-top: 0;">Dear ${orderData.payerName},</p>
+                        <p style="font-size: 14px; line-height: 1.5;">Congratulations! Your reservation for this prestigious event is confirmed. Please present this ticket at the entrance for admission.</p>
+
+                        <div class="ticket-info">
+                            <div class="info-row">
+                                <span class="info-label">Attendee Name</span>
+                                <span class="info-value">${orderData.payerName}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Date</span>
+                                <span class="info-value">${eventDetails.date}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Time</span>
+                                <span class="info-value">${eventDetails.time}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Venue</span>
+                                <span class="info-value">${eventDetails.venue}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Quantity</span>
+                                <span class="info-value">${orderData.quantity} Ticket(s)</span>
+                            </div>
+                        </div>
+
+                        <div class="barcode">
+                            <p style="font-size: 12px; margin-bottom: 5px; color: #666;">Scan at the entrance</p>
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(orderId)},${encodeURIComponent(orderData.eventName)},${encodeURIComponent(orderData.payerName)}&code=QRCode&multiplebarcodes=false&unit=cm&dpi=300&imagetype=Gif&bgcolor=%23ffffff&color=%23000000&size=10" alt="Ticket QR Code" />
+                            <p style="font-size: 12px; font-family: monospace; color: #333;">${orderId}</p>
+                        </div>
+                    </div>
+                    <div class="footer">
+                        <p>Order ID: ${orderId}</p>
+                        <p>&copy; Sarami Events. All rights reserved.</p>
+                    </div>
+                </div>
+            </body>
+            </html>`;
+        // --- END TICKET HTML CONTENT RECREATION ---
+
+        // Launch a headless browser for PDF generation
+        const browser = await puppeteer.launch({ 
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        });
+        const page = await browser.newPage();
+
+        // Set the HTML content and wait for it to load
+        await page.setContent(emailHtml, { waitUntil: 'networkidle0' });
+
+        // Generate the PDF
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            printBackground: true,
+            margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' }
+        });
+
+        await browser.close();
+
+        // Send the PDF as a file download
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Length': pdfBuffer.length,
+            'Content-Disposition': `attachment; filename="ticket-${orderId}.pdf"`
+        });
+
+        res.send(pdfBuffer);
+
+        console.log(`PDF ticket generated and sent for order ${orderId}.`);
+
+    } catch (error) {
+        console.error(`Error in /api/get-ticket-pdf for order ${orderId}:`, error);
+        res.status(500).json({ success: false, message: 'An error occurred while generating the PDF ticket.' });
+    }
+});
+// --- END NEW ENDPOINT ---
 
 // --- Generic Error Handling Middleware ---
 app.use((err, req, res, next) => {
