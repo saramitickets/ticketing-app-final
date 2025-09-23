@@ -5,8 +5,8 @@ const cors = require('cors');
 const puppeteer = require('puppeteer');
 require('dotenv').config(); // Load environment variables from .env file
 
-// A flag to easily turn off new ticket sales
-const TICKET_SALES_CLOSED = true;
+// A flag to easily turn off new ticket sales, now controlled by the environment
+const TICKET_SALES_CLOSED = process.env.TICKET_SALES_CLOSED === 'true';
 
 // --- FIREBASE DATABASE SETUP ---
 const admin = require('firebase-admin');
