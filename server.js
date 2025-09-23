@@ -5,6 +5,9 @@ const cors = require('cors');
 const puppeteer = require('puppeteer');
 require('dotenv').config(); // Load environment variables from .env file
 
+// A flag to easily turn off new ticket sales
+const TICKET_SALES_CLOSED = true;
+
 // --- FIREBASE DATABASE SETUP ---
 const admin = require('firebase-admin');
 try {
@@ -72,7 +75,7 @@ async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         return infinitiPayAccessToken;
     }
-    console.log('Fetching new InfinitiPay access token...  ');
+    console.log('Fetching new InfinitiPay access token... ');
     try {
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
@@ -101,6 +104,15 @@ async function getInfinitiPayToken() {
 
 // --- Create Order and Initiate STK Push Endpoint ---
 app.post('/api/create-order', async (req, res) => {
+    // Check if ticket sales are closed
+    if (TICKET_SALES_CLOSED) {
+        console.log('Ticket sales are closed. Rejecting new request.');
+        return res.status(403).json({ 
+            success: false, 
+            message: 'Ticket sales have ended for this event.' 
+        });
+    }
+
     const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
     console.log('Received booking request for:', { payerName, payerPhone, amount, quantity });
@@ -262,8 +274,8 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
@@ -462,8 +474,8 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         font-family: 'Times New Roman', Times, serif;
                         position: relative;
                         background: radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 0 0 / 25px 25px,
-                                     radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
-                                     linear-gradient(to right, #000000 0%, #1e3a8a 100%);
+                                    radial-gradient(circle, rgba(230,230,230,0.05) 1px, transparent 1px) 12.5px 12.5px / 25px 25px,
+                                    linear-gradient(to right, #000000 0%, #1e3a8a 100%);
                     }
                     .header h1 {
                         margin: 0;
