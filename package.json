@@ -1,11 +1,11 @@
 {
   "name": "sarami-ticketing-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-  "start": "node index.js",
-  "install-puppeteer": "npx puppeteer browsers install chromium@latest"
-},
+    "start": "node server.js",
+    "install-puppeteer": "npx puppeteer browsers install chromium@latest"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
