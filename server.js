@@ -1,15 +1,15 @@
 // ==========================================
 // SARAMI EVENTS TICKETING BACKEND
-// VERSION: 2.0 (Parallel Events Update)
+// VERSION: 2.5 (Valentine's Parallel & Render Optimized)
 // ==========================================
 
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
-require('dotenv').config(); // Load environment variables from .env file
+require('dotenv').config(); 
 
-// A flag to easily turn off new ticket sales, now controlled by the environment
+// Toggle for ticket sales
 const TICKET_SALES_CLOSED = process.env.TICKET_SALES_CLOSED === 'true';
 
 // --- FIREBASE DATABASE SETUP ---
@@ -29,18 +29,13 @@ const db = admin.firestore();
 // --- BREVO EMAIL SETUP ---
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
-
-// Configure API key authorization: api-key
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
-
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-console.log('Brevo client initialized.');
 
-// --- Initialize Express app ---
 const app = express();
 
-// --- Middleware Setup for CORS and Body Parsing ---
+// --- Middleware Setup ---
 const allowedOrigins = [
     'https://saramievents.co.ke',
     'https://www.saramievents.co.ke',
@@ -54,8 +49,7 @@ app.use(cors({
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-            callback(new Error(msg), false);
+            callback(new Error('CORS policy error'), false);
         }
     }
 }));
@@ -65,9 +59,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 3000;
 
-// ==========================================
-// DYNAMIC METADATA HELPER
-// ==========================================
+// --- DYNAMIC EVENT METADATA HELPER ---
 function getEventDetails(eventId) {
     const eventMap = {
         'VAL26-NAIVASHA': {
@@ -75,42 +67,33 @@ function getEventDetails(eventId) {
             time: "6:30 PM",
             venue: "Elsamere Resort, Naivasha",
             slogan: "A Lakeside Romantic Experience",
-            headerColor: "#004d40",
-            accentColor: "#D4AF37"
+            headerColor: "#004d40"
         },
         'VAL26-NAIROBI': {
             date: "February 14, 2026",
             time: "6:30 PM",
             venue: "Premium Garden Venue, Nairobi",
             slogan: "City Lights & Starry Nights",
-            headerColor: "#1e3a8a",
-            accentColor: "#D4AF37"
+            headerColor: "#1e3a8a"
         },
         'VAL26-ELDORET': {
             date: "February 14, 2026",
             time: "6:30 PM",
             venue: "Sirikwa Hotel, Eldoret",
             slogan: "Elegance in the Heart of Eldoret",
-            headerColor: "#800020",
-            accentColor: "#D4AF37"
+            headerColor: "#800020"
         }
     };
     return eventMap[eventId] || {
         date: "September 25, 2025",
         time: "6:30 PM",
         venue: "Lions Service Centre, Loresho",
-        slogan: "A Special Gala for the International President",
-        headerColor: "#000000",
-        accentColor: "#ffc107"
+        slogan: "A Special Gala Event",
+        headerColor: "#000000"
     };
 }
 
-// --- Test Route ---
-app.get('/', (req, res) => {
-    res.status(200).send('Sarami Ticketing Backend is running!');
-});
-
-// --- InfinitiPay Authentication Function ---
+// --- InfinitiPay Authentication ---
 let infinitiPayAccessToken = null;
 let tokenExpiryTime = null;
 
@@ -118,7 +101,6 @@ async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         return infinitiPayAccessToken;
     }
-    console.log('Fetching new InfinitiPay access token... ');
     try {
         const authPayload = {
             client_id: process.env.INFINITIPAY_CLIENT_ID,
@@ -127,38 +109,26 @@ async function getInfinitiPayToken() {
             username: process.env.INFINITIPAY_MERCHANT_USERNAME,
             password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
-        const response = await axios.post(
-            process.env.INFINITIPAY_AUTH_URL,
-            authPayload,
-            { headers: { 'Content-Type': 'application/json' } }
-        );
+        const response = await axios.post(process.env.INFINITIPAY_AUTH_URL, authPayload);
         const accessToken = response.data.token || response.data.access_token;
-        if (!accessToken) throw new Error('Access Token not found in partner login response.');
         infinitiPayAccessToken = accessToken;
-        const expiresIn = response.data.expires_in || 3600;
-        tokenExpiryTime = Date.now() + (expiresIn - 60) * 1000;
-        console.log('InfinitiPay access token fetched and stored.');
+        tokenExpiryTime = Date.now() + (response.data.expires_in - 60) * 1000;
         return infinitiPayAccessToken;
     } catch (error) {
-        console.error('Error fetching InfinitiPay token:', error.message);
-        throw new Error('Could not authenticate with InfinitiPay.');
+        throw new Error('InfinitiPay Authentication Failed');
     }
 }
 
-// --- Create Order and Initiate STK Push Endpoint ---
+// --- Create Order and Initiate STK Push ---
 app.post('/api/create-order', async (req, res) => {
     if (TICKET_SALES_CLOSED) {
-        console.log('Ticket sales are closed. Rejecting new request.');
-        return res.status(403).json({ success: false, message: 'Ticket sales have ended for this event.' });
+        return res.status(403).json({ success: false, message: 'Sales are closed.' });
     }
 
     const { payerName, payerEmail, payerPhone, amount, quantity, eventId, eventName } = req.body;
 
-    console.log('Received booking request for:', { payerName, payerPhone, amount, quantity, eventId });
-
-    if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName || !quantity) {
-        console.error('Missing required booking information.');
-        return res.status(400).json({ success: false, message: 'Missing required booking information.' });
+    if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName) {
+        return res.status(400).json({ success: false, message: 'Missing fields.' });
     }
 
     let orderRef;
@@ -170,154 +140,99 @@ app.post('/api/create-order', async (req, res) => {
         };
         orderRef = await db.collection('orders').add(orderData);
         const firestoreOrderId = orderRef.id;
-        console.log(`New order created in Firestore with ID: ${firestoreOrderId}`);
 
         const token = await getInfinitiPayToken();
-        const cleanedPhoneNumber = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
-        const fullMerchantId = process.env.INFINITIPAY_MERCHANT_ID;
-        const shortMerchantId = fullMerchantId ? fullMerchantId.slice(-3) : '';
+        const cleanedPhone = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
+        const shortMerchantId = process.env.INFINITIPAY_MERCHANT_ID ? process.env.INFINITIPAY_MERCHANT_ID.slice(-3) : '';
 
-        const stkPushPayload = {
+        const stkPayload = {
             transactionId: firestoreOrderId,
             transactionReference: firestoreOrderId,
             amount,
             merchantId: shortMerchantId,
             transactionTypeId: 1,
-            payerAccount: cleanedPhoneNumber,
+            payerAccount: cleanedPhone,
             narration: `Tickets for ${eventName}`,
             callbackURL: process.env.YOUR_APP_CALLBACK_URL,
             ptyId: 1
         };
 
-        const infinitiPayResponse = await axios.post(
-            process.env.INFINITIPAY_STKPUSH_URL,
-            stkPushPayload,
-            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-        );
+        const response = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, stkPayload, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-        if (infinitiPayResponse.data.statusCode === 200 || infinitiPayResponse.data.success === true) {
-            const transactionId = infinitiPayResponse.data.results?.paymentId || null;
-            await orderRef.update({
-                status: 'INITIATED_STK_PUSH',
-                infinitiPayTransactionId: transactionId
+        if (response.data.statusCode === 200 || response.data.success === true) {
+            await orderRef.update({ 
+                status: 'INITIATED_STK_PUSH', 
+                infinitiPayTransactionId: response.data.results?.paymentId 
             });
-            console.log(`STK Push initiated for Order ${firestoreOrderId}`);
-
-            res.status(200).json({
-                success: true,
-                message: 'STK Push initiated successfully.',
-                orderId: firestoreOrderId,
-                transactionId: transactionId
-            });
+            res.status(200).json({ success: true, orderId: firestoreOrderId });
         } else {
-            throw new Error(`STK Push failed: ${infinitiPayResponse.data.message}`);
+            throw new Error('STK Push Error');
         }
     } catch (error) {
-        if (orderRef) {
-            await orderRef.update({ status: 'FAILED', errorMessage: error.message });
-        }
-        res.status(500).json({ success: false, message: 'An unexpected error occurred.' });
+        if (orderRef) await orderRef.update({ status: 'FAILED' });
+        res.status(500).json({ success: false, message: 'Error initiating order' });
     }
 });
 
-// --- Callback Processing & Elegant Email Dispatch ---
+// --- Callback & Ticket Generation ---
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     let callbackData;
     try {
-        const rawBody = req.body.toString();
-        callbackData = JSON.parse(rawBody);
-        console.log('Received InfinitiPay callback:', callbackData);
-    } catch (parseError) {
-        return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
+        callbackData = JSON.parse(req.body.toString());
+        console.log("Callback received:", callbackData);
+    } catch (e) {
+        return res.status(400).send('Invalid JSON');
     }
 
-    const { ref, merchantTxnId, paymentId: infinitiPayTransactionId } = callbackData.results || {};
+    const { ref, merchantTxnId, paymentId } = callbackData.results || {};
     const firestoreOrderId = ref || merchantTxnId;
-    const transactionMessage = (callbackData.data && callbackData.data.description) || callbackData.message;
 
     try {
         const orderRef = db.collection('orders').doc(firestoreOrderId);
         const orderDoc = await orderRef.get();
+        if (!orderDoc.exists) return res.status(404).send('Not Found');
 
-        if (!orderDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Order not found.' });
-        }
+        const orderData = orderDoc.data();
+        let newStatus = (callbackData.statusCode === 200 && callbackData.message?.toLowerCase().includes("success")) ? 'PAID' : 'FAILED';
 
-        let newStatus = 'FAILED'; 
-        if (callbackData.statusCode === 200 && transactionMessage?.toLowerCase().includes("success")) {
-            newStatus = 'PAID';
-        }
-
-        await orderRef.update({
-            status: newStatus,
-            infinitiPayTransactionId,
-            callbackData,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        await orderRef.update({ status: newStatus, infinitiPayTransactionId: paymentId, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
 
         if (newStatus === 'PAID') {
-            const orderData = orderDoc.data();
-            const eventDetails = getEventDetails(orderData.eventId);
-
-            // THE COMPLETE TICKET TEMPLATE (Preserving original complexity/length)
+            const eventMeta = getEventDetails(orderData.eventId);
+            
+            // TICKET EMAIL HTML
             const emailHtml = `
             <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f0f2f5; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-                    .header { background: ${eventDetails.headerColor}; color: #ffffff; padding: 40px 20px; text-align: center; }
-                    .header h1 { margin: 0; font-size: 28px; color: ${eventDetails.accentColor}; letter-spacing: 2px; text-transform: uppercase; }
-                    .header h2 { margin: 10px 0 0; font-size: 16px; color: #f0f0f0; font-weight: 300; }
-                    .body { padding: 40px; color: #333333; }
-                    .welcome { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
-                    .instruction { font-size: 14px; color: #666; line-height: 1.6; margin-bottom: 30px; }
-                    .info-grid { background-color: #f8f9fa; border-radius: 10px; padding: 25px; border: 1px solid #eee; margin-bottom: 30px; }
-                    .grid-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px dashed #ddd; }
-                    .grid-row:last-child { border-bottom: none; }
-                    .label { font-size: 12px; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; }
-                    .value { font-size: 15px; font-weight: 700; color: #111; }
-                    .qr-section { text-align: center; padding: 20px; background: #fff; border: 2px solid #f0f0f0; border-radius: 15px; }
-                    .qr-section img { width: 200px; height: 200px; margin-bottom: 10px; }
-                    .order-id { font-family: monospace; font-size: 12px; color: #888; }
-                    .footer { text-align: center; padding: 30px; background-color: #fafafa; border-top: 1px solid #eee; font-size: 12px; color: #aaa; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>${orderData.eventName}</h1>
-                        <h2>${eventDetails.slogan}</h2>
+            <html>
+            <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                    <div style="background: ${eventMeta.headerColor}; color: #D4AF37; padding: 30px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">${orderData.eventName}</h1>
+                        <p style="color: white; margin: 5px 0 0;">${eventMeta.slogan}</p>
                     </div>
-                    <div class="body">
-                        <div class="welcome">You're invited, ${orderData.payerName}!</div>
-                        <p class="instruction">Your booking is successful. Please present this official e-ticket at the venue gate for scanning and entry.</p>
-                        
-                        <div class="info-grid">
-                            <div class="grid-row"><span class="label">Attendee</span><span class="value">${orderData.payerName}</span></div>
-                            <div class="grid-row"><span class="label">Location</span><span class="value">${eventDetails.venue}</span></div>
-                            <div class="grid-row"><span class="label">Date</span><span class="value">${eventDetails.date}</span></div>
-                            <div class="grid-row"><span class="label">Doors Open</span><span class="value">${eventDetails.time}</span></div>
-                            <div class="grid-row"><span class="label">Package</span><span class="value">${orderData.quantity} Person(s)</span></div>
+                    <div style="padding: 30px;">
+                        <p style="font-size: 18px; font-weight: bold;">Confirmed Reservation</p>
+                        <p>Dear ${orderData.payerName}, your payment has been received.</p>
+                        <div style="background: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee;">
+                            <p style="margin: 5px 0;"><strong>Venue:</strong> ${eventMeta.venue}</p>
+                            <p style="margin: 5px 0;"><strong>Date:</strong> ${eventMeta.date}</p>
+                            <p style="margin: 5px 0;"><strong>Access for:</strong> ${orderData.quantity} Package(s)</p>
                         </div>
-
-                        <div class="qr-section">
-                            <p style="margin-top:0; font-weight:bold;">GATE SCAN CODE</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(firestoreOrderId)}&code=QRCode&size=10" alt="Ticket QR">
-                            <div class="order-id">REF: ${firestoreOrderId}</div>
+                        <div style="text-align: center; margin-top: 30px;">
+                            <p style="font-size: 12px; color: #888;">SCAN FOR ENTRY</p>
+                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="180">
+                            <p style="font-family: monospace; font-size: 12px;">ID: ${firestoreOrderId}</p>
                         </div>
                     </div>
-                    <div class="footer">
-                        <p>&copy; 2025 Sarami Events. All Rights Reserved.</p>
-                        <p>This is an automated ticket. Do not share this email.</p>
+                    <div style="background: #eee; padding: 15px; text-align: center; font-size: 11px; color: #777;">
+                        &copy; Sarami Events. Please show this at the gate.
                     </div>
                 </div>
             </body>
             </html>`;
 
-            // BREVO DISPATCH
             const sendSmtpEmail = {
                 sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
                 to: [{ email: orderData.payerEmail, name: orderData.payerName }],
@@ -326,13 +241,14 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
             };
             await apiInstance.sendTransacEmail(sendSmtpEmail);
         }
-        res.status(200).json({ success: true });
+        res.status(200).send('OK');
     } catch (error) {
-        res.status(500).json({ success: false });
+        console.error("Callback processing error:", error);
+        res.status(500).send('Error');
     }
 });
 
-// --- PDF Generator (Admin/Check-in) ---
+// --- PDF Generation (Optimized for Render) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     const { orderId } = req.params;
     try {
@@ -340,51 +256,53 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         if (!orderDoc.exists) return res.status(404).send('Not Found');
 
         const orderData = orderDoc.data();
-        const eventDetails = getEventDetails(orderData.eventId);
+        const eventMeta = getEventDetails(orderData.eventId);
 
+        // --- PUPPETEER LAUNCH USING RENDER ENV PATH ---
         const browser = await puppeteer.launch({
-            executablePath: puppeteer.executablePath(),
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ]
         });
+
         const page = await browser.newPage();
-        
-        // Detailed PDF Design
-        const pdfContent = `
+        const pdfHtml = `
         <html>
-        <body style="font-family:sans-serif; padding:50px;">
-            <div style="border:10px solid ${eventDetails.headerColor}; border-radius:20px; padding:40px;">
-                <h1 style="text-align:center; color:${eventDetails.headerColor}; font-size:40px;">SARAMI EVENTS</h1>
-                <h2 style="text-align:center;">OFFICIAL ENTRY TICKET</h2>
-                <hr style="border:1px dashed #ccc; margin:30px 0;">
-                <p style="font-size:20px;"><strong>EVENT:</strong> ${orderData.eventName}</p>
-                <p style="font-size:20px;"><strong>GUEST:</strong> ${orderData.payerName}</p>
-                <p style="font-size:20px;"><strong>VENUE:</strong> ${eventDetails.venue}</p>
-                <p style="font-size:20px;"><strong>DATE:</strong> ${eventDetails.date}</p>
-                <div style="text-align:center; margin-top:50px;">
-                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${orderId}&code=QRCode" width="250">
-                    <p style="font-family:monospace; margin-top:20px;">VERIFICATION ID: ${orderId}</p>
+        <body style="font-family: sans-serif; padding: 50px; text-align: center;">
+            <div style="border: 10px solid ${eventMeta.headerColor}; padding: 40px; border-radius: 25px;">
+                <h1 style="color: ${eventMeta.headerColor}; font-size: 35px; margin-bottom: 0;">SARAMI EVENTS</h1>
+                <p style="font-size: 18px; margin-top: 5px;">OFFICIAL ENTRY PASS</p>
+                <hr style="border: 1px dashed #ccc; margin: 30px 0;">
+                <h2 style="font-size: 24px;">${orderData.eventName}</h2>
+                <p style="font-size: 20px;"><strong>Guest:</strong> ${orderData.payerName}</p>
+                <p style="font-size: 20px;"><strong>Venue:</strong> ${eventMeta.venue}</p>
+                <p style="font-size: 20px;"><strong>Date:</strong> ${eventMeta.date}</p>
+                <div style="margin-top: 40px;">
+                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${orderId}&code=QRCode" width="220">
+                    <p style="font-family: monospace; margin-top: 15px;">REF: ${orderId}</p>
                 </div>
             </div>
         </body>
         </html>`;
 
-        await page.setContent(pdfContent);
+        await page.setContent(pdfHtml);
         const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
         await browser.close();
 
-        res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Sarami-${orderId}.pdf"` });
+        res.set({ 
+            'Content-Type': 'application/pdf', 
+            'Content-Disposition': `attachment; filename="SaramiTicket-${orderId}.pdf"` 
+        });
         res.send(pdfBuffer);
     } catch (e) {
-        res.status(500).send('Error generating PDF');
+        console.error("PDF generation failed:", e);
+        res.status(500).send('PDF Error');
     }
 });
 
-// --- Error Handling ---
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: 'Internal Server Error' });
-});
-
-app.listen(PORT, () => {
-    console.log(`Sarami Backend Live on Port ${PORT}`);
-});
+// Start Server
+app.listen(PORT, () => console.log(`Sarami Backend Running on Port ${PORT}`));
