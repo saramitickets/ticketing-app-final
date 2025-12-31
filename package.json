@@ -1,23 +1,27 @@
 {
   "name": "sarami-ticketing-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "nodemon server.js",
     "install-puppeteer": "npx puppeteer browsers install chromium@latest"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["ticketing", "sarami", "mpesa", "stkpush"],
+  "author": "Sarami Events",
   "license": "ISC",
-  "description": "",
+  "description": "Backend for Sarami Events Parallel Valentine's Gala 2026",
   "dependencies": {
-    "axios": "^1.9.0",
+    "@getbrevo/brevo": "^3.0.1",
+    "axios": "^1.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
+    "express": "^4.21.0",
     "firebase-admin": "^13.4.0",
-    "sib-api-v3-sdk": "^8.5.0",
-    "@getbrevo/brevo": "^3.0.1",
-    "puppeteer": "^22.0.0"
+    "puppeteer": "^22.0.0",
+    "sib-api-v3-sdk": "^8.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }
