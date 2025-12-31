@@ -1,6 +1,6 @@
 // ==========================================
 // SARAMI EVENTS TICKETING BACKEND
-// VERSION: 2.8 (Auth Debugging & Quantity Fix)
+// VERSION: 2.9 (Auth Fix & Payload Validation)
 // ==========================================
 
 const express = require('express');
@@ -95,29 +95,47 @@ async function getInfinitiPayToken() {
     if (infinitiPayAccessToken && tokenExpiryTime && Date.now() < tokenExpiryTime) {
         return infinitiPayAccessToken;
     }
+    
+    // Clean environment variables to prevent trailing spaces
+    const authUrl = (process.env.INFINITIPAY_AUTH_URL || "").trim();
+    const clientId = (process.env.INFINITIPAY_CLIENT_ID || "").trim();
+    const clientSecret = (process.env.INFINITIPAY_CLIENT_SECRET || "").trim();
+    const username = (process.env.INFINITIPAY_MERCHANT_USERNAME || "").trim();
+    const password = (process.env.INFINITIPAY_MERCHANT_PASSWORD || "").trim();
+
     try {
         const authPayload = {
-            client_id: process.env.INFINITIPAY_CLIENT_ID,
-            client_secret: process.env.INFINITIPAY_CLIENT_SECRET,
+            client_id: clientId,
+            client_secret: clientSecret,
             grant_type: 'password',
-            username: process.env.INFINITIPAY_MERCHANT_USERNAME,
-            password: process.env.INFINITIPAY_MERCHANT_PASSWORD
+            username: username,
+            password: password
         };
         
-        console.log("Attempting InfinitiPay Auth...");
-        const response = await axios.post(process.env.INFINITIPAY_AUTH_URL, authPayload);
+        console.log(`Attempting InfinitiPay Auth at: ${authUrl}`);
+        const response = await axios.post(authUrl, authPayload, { timeout: 10000 });
         
         const accessToken = response.data.token || response.data.access_token;
         if (!accessToken) throw new Error("Token missing in response");
         
         infinitiPayAccessToken = accessToken;
-        tokenExpiryTime = Date.now() + (response.data.expires_in - 60) * 1000;
+        const expiresIn = response.data.expires_in || 3600;
+        tokenExpiryTime = Date.now() + (expiresIn - 60) * 1000;
+        
+        console.log("InfinitiPay Auth Successful");
         return infinitiPayAccessToken;
     } catch (error) {
-        // DETAILED AUTH ERROR LOGGING
-        const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-        console.error("INFINITIPAY AUTH FAILED:", errorMsg);
-        throw new Error('InfinitiPay Authentication Failed: ' + errorMsg);
+        let errorDetail = "";
+        if (error.response) {
+            errorDetail = JSON.stringify(error.response.data);
+        } else if (error.request) {
+            errorDetail = "No response received from InfinitiPay server. Check the AUTH_URL.";
+        } else {
+            errorDetail = error.message;
+        }
+        
+        console.error("INFINITIPAY AUTH FAILED:", errorDetail);
+        throw new Error('InfinitiPay Authentication Failed: ' + errorDetail);
     }
 }
 
@@ -128,7 +146,7 @@ app.post('/api/create-order', async (req, res) => {
 
     const { payerName, payerEmail, payerPhone, amount, eventId, eventName } = req.body;
     
-    // Quantity fix from previous step
+    // Fallback quantity to prevent Firestore crashes
     const quantity = parseInt(req.body.quantity) || 1; 
 
     if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName) {
@@ -144,26 +162,27 @@ app.post('/api/create-order', async (req, res) => {
             status: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
+        
         orderRef = await db.collection('orders').add(orderData);
         const firestoreOrderId = orderRef.id;
 
         const token = await getInfinitiPayToken();
         const cleanedPhone = payerPhone.startsWith('0') ? '254' + payerPhone.substring(1) : payerPhone;
-        const shortMerchantId = process.env.INFINITIPAY_MERCHANT_ID ? process.env.INFINITIPAY_MERCHANT_ID.slice(-3) : '';
+        const merchantId = (process.env.INFINITIPAY_MERCHANT_ID || "").trim().slice(-3);
 
         const stkPayload = {
             transactionId: firestoreOrderId,
             transactionReference: firestoreOrderId,
             amount,
-            merchantId: shortMerchantId,
+            merchantId: merchantId,
             transactionTypeId: 1,
             payerAccount: cleanedPhone,
             narration: `Tickets for ${eventName}`,
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL,
+            callbackURL: (process.env.YOUR_APP_CALLBACK_URL || "").trim(),
             ptyId: 1
         };
 
-        const response = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, stkPayload, {
+        const response = await axios.post(process.env.INFINITIPAY_STKPUSH_URL.trim(), stkPayload, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -174,11 +193,11 @@ app.post('/api/create-order', async (req, res) => {
             });
             res.status(200).json({ success: true, orderId: firestoreOrderId });
         } else {
-            throw new Error('STK Push Request Failed');
+            throw new Error('STK Push Request Failed: ' + JSON.stringify(response.data));
         }
     } catch (error) {
         if (orderRef) await orderRef.update({ status: 'FAILED', errorDetail: error.message });
-        console.error("DETAILED ERROR:", error.message);
+        console.error("CREATE ORDER ERROR:", error.message);
         res.status(500).json({ 
             success: false, 
             message: 'Internal Server Error',
@@ -187,8 +206,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// ... (Rest of code: Callback and PDF routes remain same as version 2.7)
-
+// (Keep existing Callback and PDF routes)
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     let callbackData;
     try {
@@ -207,10 +225,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         await orderRef.update({ status: newStatus, infinitiPayTransactionId: paymentId, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         if (newStatus === 'PAID') {
             const eventMeta = getEventDetails(orderData.eventId);
-            const emailHtml = `<div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
-                <div style="background: ${eventMeta.headerColor}; color: white; padding: 20px; text-align: center;"><h1 style="color: #D4AF37;">${orderData.eventName}</h1></div>
-                <div style="padding: 20px;"><p>Dear ${orderData.payerName}, your ticket is confirmed!</p><p><strong>Venue:</strong> ${eventMeta.venue}</p><p><strong>Date:</strong> ${eventMeta.date}</p>
-                <div style="text-align: center; margin-top: 20px;"><img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="150"></div></div></div>`;
+            const emailHtml = `<div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;"><div style="background: ${eventMeta.headerColor}; color: white; padding: 20px; text-align: center;"><h1 style="color: #D4AF37;">${orderData.eventName}</h1></div><div style="padding: 20px;"><p>Dear ${orderData.payerName}, your ticket is confirmed!</p><p><strong>Venue:</strong> ${eventMeta.venue}</p><p><strong>Date:</strong> ${eventMeta.date}</p><div style="text-align: center; margin-top: 20px;"><img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="150"></div></div></div>`;
             const sendSmtpEmail = { sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" }, to: [{ email: orderData.payerEmail, name: orderData.payerName }], subject: `🎟️ Ticket Confirmed: ${orderData.eventName}`, htmlContent: emailHtml };
             await apiInstance.sendTransacEmail(sendSmtpEmail);
         }
