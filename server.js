@@ -1,6 +1,6 @@
 // ==========================================
 // SARAMI EVENTS TICKETING BACKEND
-// VERSION: 2.7 (Firestore Quantity Fix & Render Optimized)
+// VERSION: 2.8 (Auth Debugging & Quantity Fix)
 // ==========================================
 
 const express = require('express');
@@ -9,10 +9,8 @@ const cors = require('cors');
 const puppeteer = require('puppeteer');
 require('dotenv').config(); 
 
-// Toggle for ticket sales
 const TICKET_SALES_CLOSED = process.env.TICKET_SALES_CLOSED === 'true';
 
-// --- FIREBASE DATABASE SETUP ---
 const admin = require('firebase-admin');
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -26,7 +24,6 @@ try {
 }
 const db = admin.firestore();
 
-// --- BREVO EMAIL SETUP ---
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -35,7 +32,6 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 
-// --- Middleware Setup ---
 const allowedOrigins = [
     'https://saramievents.co.ke',
     'https://www.saramievents.co.ke',
@@ -59,7 +55,6 @@ app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 10000;
 
-// --- DYNAMIC EVENT METADATA HELPER ---
 function getEventDetails(eventId) {
     const eventMap = {
         'VAL26-NAIVASHA': {
@@ -93,7 +88,6 @@ function getEventDetails(eventId) {
     };
 }
 
-// --- InfinitiPay Authentication ---
 let infinitiPayAccessToken = null;
 let tokenExpiryTime = null;
 
@@ -109,17 +103,24 @@ async function getInfinitiPayToken() {
             username: process.env.INFINITIPAY_MERCHANT_USERNAME,
             password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         };
+        
+        console.log("Attempting InfinitiPay Auth...");
         const response = await axios.post(process.env.INFINITIPAY_AUTH_URL, authPayload);
+        
         const accessToken = response.data.token || response.data.access_token;
+        if (!accessToken) throw new Error("Token missing in response");
+        
         infinitiPayAccessToken = accessToken;
         tokenExpiryTime = Date.now() + (response.data.expires_in - 60) * 1000;
         return infinitiPayAccessToken;
     } catch (error) {
-        throw new Error('InfinitiPay Authentication Failed');
+        // DETAILED AUTH ERROR LOGGING
+        const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
+        console.error("INFINITIPAY AUTH FAILED:", errorMsg);
+        throw new Error('InfinitiPay Authentication Failed: ' + errorMsg);
     }
 }
 
-// --- Create Order and Initiate STK Push ---
 app.post('/api/create-order', async (req, res) => {
     if (TICKET_SALES_CLOSED) {
         return res.status(403).json({ success: false, message: 'Sales are closed.' });
@@ -127,7 +128,7 @@ app.post('/api/create-order', async (req, res) => {
 
     const { payerName, payerEmail, payerPhone, amount, eventId, eventName } = req.body;
     
-    // FIX: Ensure quantity is a valid number and never undefined to prevent Firestore crash
+    // Quantity fix from previous step
     const quantity = parseInt(req.body.quantity) || 1; 
 
     if (!payerName || !payerEmail || !payerPhone || !amount || !eventId || !eventName) {
@@ -138,7 +139,7 @@ app.post('/api/create-order', async (req, res) => {
     try {
         const orderData = {
             payerName, payerEmail, payerPhone, amount, 
-            quantity: quantity, // Validated numeric value
+            quantity: quantity,
             eventId, eventName,
             status: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -186,7 +187,8 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- Callback Processing ---
+// ... (Rest of code: Callback and PDF routes remain same as version 2.7)
+
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     let callbackData;
     try {
@@ -194,86 +196,44 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
     } catch (e) {
         return res.status(400).send('Invalid JSON');
     }
-
     const { ref, merchantTxnId, paymentId } = callbackData.results || {};
     const firestoreOrderId = ref || merchantTxnId;
-
     try {
         const orderRef = db.collection('orders').doc(firestoreOrderId);
         const orderDoc = await orderRef.get();
         if (!orderDoc.exists) return res.status(404).send('Not Found');
-
         const orderData = orderDoc.data();
         let newStatus = (callbackData.statusCode === 200 && callbackData.message?.toLowerCase().includes("success")) ? 'PAID' : 'FAILED';
-
         await orderRef.update({ status: newStatus, infinitiPayTransactionId: paymentId, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-
         if (newStatus === 'PAID') {
             const eventMeta = getEventDetails(orderData.eventId);
-            
-            const emailHtml = `
-            <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
-                <div style="background: ${eventMeta.headerColor}; color: white; padding: 20px; text-align: center;">
-                    <h1 style="color: #D4AF37;">${orderData.eventName}</h1>
-                </div>
-                <div style="padding: 20px;">
-                    <p>Dear ${orderData.payerName}, your ticket is confirmed!</p>
-                    <p><strong>Venue:</strong> ${eventMeta.venue}</p>
-                    <p><strong>Date:</strong> ${eventMeta.date}</p>
-                    <div style="text-align: center; margin-top: 20px;">
-                        <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="150">
-                    </div>
-                </div>
-            </div>`;
-
-            const sendSmtpEmail = {
-                sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
-                to: [{ email: orderData.payerEmail, name: orderData.payerName }],
-                subject: `🎟️ Ticket Confirmed: ${orderData.eventName}`,
-                htmlContent: emailHtml
-            };
+            const emailHtml = `<div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
+                <div style="background: ${eventMeta.headerColor}; color: white; padding: 20px; text-align: center;"><h1 style="color: #D4AF37;">${orderData.eventName}</h1></div>
+                <div style="padding: 20px;"><p>Dear ${orderData.payerName}, your ticket is confirmed!</p><p><strong>Venue:</strong> ${eventMeta.venue}</p><p><strong>Date:</strong> ${eventMeta.date}</p>
+                <div style="text-align: center; margin-top: 20px;"><img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="150"></div></div></div>`;
+            const sendSmtpEmail = { sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" }, to: [{ email: orderData.payerEmail, name: orderData.payerName }], subject: `🎟️ Ticket Confirmed: ${orderData.eventName}`, htmlContent: emailHtml };
             await apiInstance.sendTransacEmail(sendSmtpEmail);
         }
         res.status(200).send('OK');
-    } catch (error) {
-        res.status(500).send('Error');
-    }
+    } catch (error) { res.status(500).send('Error'); }
 });
 
-// --- PDF Generation (Optimized for Render) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     const { orderId } = req.params;
     try {
         const orderDoc = await db.collection('orders').doc(orderId).get();
         if (!orderDoc.exists) return res.status(404).send('Not Found');
-
         const orderData = orderDoc.data();
         const eventMeta = getEventDetails(orderData.eventId);
-
-        const browser = await puppeteer.launch({
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        });
-
+        const browser = await puppeteer.launch({ executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(), args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
         const page = await browser.newPage();
-        const pdfHtml = `<div style="padding: 50px; border: 10px solid ${eventMeta.headerColor}; border-radius: 20px; text-align: center;">
-            <h1 style="color: ${eventMeta.headerColor};">SARAMI EVENTS</h1>
-            <h2>${orderData.eventName}</h2>
-            <p>Attendee: ${orderData.payerName}</p>
-            <p>Venue: ${eventMeta.venue}</p>
-            <img src="https://barcode.tec-it.com/barcode.ashx?data=${orderId}&code=QRCode" width="200">
-        </div>`;
-
+        const pdfHtml = `<div style="padding: 50px; border: 10px solid ${eventMeta.headerColor}; border-radius: 20px; text-align: center;"><h1 style="color: ${eventMeta.headerColor};">SARAMI EVENTS</h1><h2>${orderData.eventName}</h2><p>Attendee: ${orderData.payerName}</p><p>Venue: ${eventMeta.venue}</p><img src="https://barcode.tec-it.com/barcode.ashx?data=${orderId}&code=QRCode" width="200"></div>`;
         await page.setContent(pdfHtml);
         const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
         await browser.close();
-
         res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="ticket-${orderId}.pdf"` });
         res.send(pdfBuffer);
-    } catch (e) {
-        res.status(500).json({ success: false, message: e.message });
-    }
+    } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// Start Server
 app.listen(PORT, () => console.log(`Sarami Backend Running on Port ${PORT}`));
