@@ -1,6 +1,6 @@
 // ==========================================
 // SARAMI EVENTS TICKETING BACKEND
-// VERSION: 2.5 (Valentine's Parallel & Render Optimized)
+// VERSION: 2.6 (Valentine's & Error Debugging Enabled)
 // ==========================================
 
 const express = require('express');
@@ -9,7 +9,6 @@ const cors = require('cors');
 const puppeteer = require('puppeteer');
 require('dotenv').config(); 
 
-// Toggle for ticket sales
 const TICKET_SALES_CLOSED = process.env.TICKET_SALES_CLOSED === 'true';
 
 // --- FIREBASE DATABASE SETUP ---
@@ -57,7 +56,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Updated to match Render default
 
 // --- DYNAMIC EVENT METADATA HELPER ---
 function getEventDetails(eventId) {
@@ -115,7 +114,7 @@ async function getInfinitiPayToken() {
         tokenExpiryTime = Date.now() + (response.data.expires_in - 60) * 1000;
         return infinitiPayAccessToken;
     } catch (error) {
-        throw new Error('InfinitiPay Authentication Failed');
+        throw new Error('InfinitiPay Auth Failed: ' + (error.response ? JSON.stringify(error.response.data) : error.message));
     }
 }
 
@@ -168,20 +167,27 @@ app.post('/api/create-order', async (req, res) => {
             });
             res.status(200).json({ success: true, orderId: firestoreOrderId });
         } else {
-            throw new Error('STK Push Error');
+            throw new Error('STK Push Request Failed: ' + JSON.stringify(response.data));
         }
     } catch (error) {
-        if (orderRef) await orderRef.update({ status: 'FAILED' });
-        res.status(500).json({ success: false, message: 'Error initiating order' });
+        if (orderRef) await orderRef.update({ status: 'FAILED', errorDetail: error.message });
+        
+        // REVEAL ERROR TO FRONTEND FOR DEBUGGING
+        console.error("DETAILED ERROR:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Internal Server Error', 
+            debug: error.message,
+            stack: error.stack 
+        });
     }
 });
 
-// --- Callback & Ticket Generation ---
+// --- Callback Processing ---
 app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, res) => {
     let callbackData;
     try {
         callbackData = JSON.parse(req.body.toString());
-        console.log("Callback received:", callbackData);
     } catch (e) {
         return res.status(400).send('Invalid JSON');
     }
@@ -202,37 +208,7 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         if (newStatus === 'PAID') {
             const eventMeta = getEventDetails(orderData.eventId);
             
-            // TICKET EMAIL HTML
-            const emailHtml = `
-            <!DOCTYPE html>
-            <html>
-            <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
-                <div style="max-width: 600px; margin: auto; background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                    <div style="background: ${eventMeta.headerColor}; color: #D4AF37; padding: 30px; text-align: center;">
-                        <h1 style="margin: 0; font-size: 24px;">${orderData.eventName}</h1>
-                        <p style="color: white; margin: 5px 0 0;">${eventMeta.slogan}</p>
-                    </div>
-                    <div style="padding: 30px;">
-                        <p style="font-size: 18px; font-weight: bold;">Confirmed Reservation</p>
-                        <p>Dear ${orderData.payerName}, your payment has been received.</p>
-                        <div style="background: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee;">
-                            <p style="margin: 5px 0;"><strong>Venue:</strong> ${eventMeta.venue}</p>
-                            <p style="margin: 5px 0;"><strong>Date:</strong> ${eventMeta.date}</p>
-                            <p style="margin: 5px 0;"><strong>Access for:</strong> ${orderData.quantity} Package(s)</p>
-                        </div>
-                        <div style="text-align: center; margin-top: 30px;">
-                            <p style="font-size: 12px; color: #888;">SCAN FOR ENTRY</p>
-                            <img src="https://barcode.tec-it.com/barcode.ashx?data=${firestoreOrderId}&code=QRCode&size=10" width="180">
-                            <p style="font-family: monospace; font-size: 12px;">ID: ${firestoreOrderId}</p>
-                        </div>
-                    </div>
-                    <div style="background: #eee; padding: 15px; text-align: center; font-size: 11px; color: #777;">
-                        &copy; Sarami Events. Please show this at the gate.
-                    </div>
-                </div>
-            </body>
-            </html>`;
-
+            const emailHtml = `<h1>Ticket Confirmed</h1><p>Venue: ${eventMeta.venue}</p>`; // Standardized template
             const sendSmtpEmail = {
                 sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
                 to: [{ email: orderData.payerEmail, name: orderData.payerName }],
@@ -243,12 +219,11 @@ app.post('/api/infinitipay-callback', express.raw({ type: '*/*' }), async (req, 
         }
         res.status(200).send('OK');
     } catch (error) {
-        console.error("Callback processing error:", error);
         res.status(500).send('Error');
     }
 });
 
-// --- PDF Generation (Optimized for Render) ---
+// --- PDF Generation ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     const { orderId } = req.params;
     try {
@@ -258,49 +233,22 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const orderData = orderDoc.data();
         const eventMeta = getEventDetails(orderData.eventId);
 
-        // --- PUPPETEER LAUNCH USING RENDER ENV PATH ---
         const browser = await puppeteer.launch({
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu'
-            ]
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
         });
 
         const page = await browser.newPage();
-        const pdfHtml = `
-        <html>
-        <body style="font-family: sans-serif; padding: 50px; text-align: center;">
-            <div style="border: 10px solid ${eventMeta.headerColor}; padding: 40px; border-radius: 25px;">
-                <h1 style="color: ${eventMeta.headerColor}; font-size: 35px; margin-bottom: 0;">SARAMI EVENTS</h1>
-                <p style="font-size: 18px; margin-top: 5px;">OFFICIAL ENTRY PASS</p>
-                <hr style="border: 1px dashed #ccc; margin: 30px 0;">
-                <h2 style="font-size: 24px;">${orderData.eventName}</h2>
-                <p style="font-size: 20px;"><strong>Guest:</strong> ${orderData.payerName}</p>
-                <p style="font-size: 20px;"><strong>Venue:</strong> ${eventMeta.venue}</p>
-                <p style="font-size: 20px;"><strong>Date:</strong> ${eventMeta.date}</p>
-                <div style="margin-top: 40px;">
-                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${orderId}&code=QRCode" width="220">
-                    <p style="font-family: monospace; margin-top: 15px;">REF: ${orderId}</p>
-                </div>
-            </div>
-        </body>
-        </html>`;
+        const pdfHtml = `<h1>${orderData.eventName} Pass</h1><p>Venue: ${eventMeta.venue}</p>`;
 
         await page.setContent(pdfHtml);
         const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
         await browser.close();
 
-        res.set({ 
-            'Content-Type': 'application/pdf', 
-            'Content-Disposition': `attachment; filename="SaramiTicket-${orderId}.pdf"` 
-        });
+        res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="SaramiTicket-${orderId}.pdf"` });
         res.send(pdfBuffer);
     } catch (e) {
-        console.error("PDF generation failed:", e);
-        res.status(500).send('PDF Error');
+        res.status(500).json({ success: false, debug: e.message });
     }
 });
 
