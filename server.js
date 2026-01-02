@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V3.3
-// FIXED: Render Port Binding + Robust Startup
+// SARAMI EVENTS TICKETING BACKEND - V3.4
+// DEBUG MODE: Webhook.site Redirection Enabled
 // ==========================================
 
 const express = require('express');
@@ -35,58 +35,42 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// CRITICAL FIX: Use Render's assigned port, fallback to safe local port
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 
-// Dynamic Metadata
-function getEventDetails(eventId) {
-    const eventMap = {
-        'VAL26-NAIVASHA': { venue: "Elsamere Resort", color: "#004d40" },
-        'VAL26-NAIROBI': { venue: "Premium Garden", color: "#1e3a8a" },
-        'VAL26-ELDORET': { venue: "Sirikwa Hotel", color: "#800020" }
-    };
-    return eventMap[eventId] || { venue: "Sarami Venue", color: "#000000" };
-}
-
-// --- CACHED AUTH TOKEN LOGIC ---
+// --- CACHED AUTH TOKEN LOGIC (DEBUG VERSION) ---
 let cachedToken = null;
 let expiry = null;
 
 async function getInfinitiPayToken() {
-    if (cachedToken && expiry && Date.now() < expiry) {
-        return cachedToken;
-    }
-
-    const authUrl = "https://app.astraafrica.co:9090/infinitilite/v2/users/partner/login";
+    // We skip the cache during debugging to ensure every click sends a new request
+    
+    // DEBUG: Hardcoding your unique Webhook URL to bypass ENV issues
+    const authUrl = "https://webhook.site/98e7e273-2415-495e-8cf3-8deb1d2c2d82";
 
     const payload = {
-        client_id: process.env.INFINITIPAY_CLIENT_ID?.trim(),
-        client_secret: process.env.INFINITIPAY_CLIENT_SECRET?.trim(),
+        client_id: (process.env.INFINITIPAY_CLIENT_ID || "DEBUG_CLIENT_ID").trim(),
+        client_secret: (process.env.INFINITIPAY_CLIENT_SECRET || "DEBUG_SECRET").trim(),
         grant_type: 'password',
-        username: process.env.INFINITIPAY_MERCHANT_USERNAME?.trim(),
-        password: process.env.INFINITIPAY_MERCHANT_PASSWORD?.trim()
+        username: (process.env.INFINITIPAY_MERCHANT_USERNAME || "DEBUG_USER").trim(),
+        password: (process.env.INFINITIPAY_MERCHANT_PASSWORD || "DEBUG_PASS").trim()
     };
 
     try {
-        console.log("Requesting new token from Astra Africa...");
+        console.log("DEBUG: Sending test payload to Webhook.site at:", authUrl);
+        
         const response = await axios.post(authUrl, payload, {
             headers: { 'Content-Type': 'application/json' },
             timeout: 15000
         });
 
-        const token = response.data.token || response.data.access_token;
-        if (!token) throw new Error("No token returned in response");
-
-        cachedToken = token;
-        expiry = Date.now() + (3600 - 60) * 1000; // Refresh 1 min early
-        console.log("Token acquired successfully");
-        return token;
+        // Webhook.site will return a 200 OK but no token. 
+        // We return a fake token so the code can continue to the next step.
+        console.log("DEBUG: Webhook received the request successfully.");
+        return "debug_token_12345"; 
+        
     } catch (error) {
-        const detail = error.response 
-            ? JSON.stringify(error.response.data) 
-            : error.message;
-        console.error("AUTH ERROR:", detail);
-        throw new Error("Authentication Failed: " + detail);
+        console.error("DEBUG AUTH ERROR:", error.message);
+        throw new Error("Webhook Redirection Failed: " + error.message);
     }
 }
 
@@ -94,21 +78,16 @@ async function getInfinitiPayToken() {
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, eventName, quantity } = req.body;
 
-    // Validate required fields
     if (!payerName || !payerEmail || !payerPhone || !amount || !eventId) {
         return res.status(400).json({ success: false, debug: "Missing required fields" });
     }
 
-    // Ensure quantity is a valid number
     const qty = parseInt(quantity) || 1;
-    if (qty < 1 || qty > 10) { // Reasonable limit
-        return res.status(400).json({ success: false, debug: "Invalid quantity" });
-    }
-
     let orderRef;
 
     try {
-        // Save order to Firestore
+        // 1. Test Firestore Connectivity
+        console.log("DEBUG: Attempting to save order to Firestore...");
         orderRef = await db.collection('orders').add({
             payerName,
             payerEmail,
@@ -117,78 +96,35 @@ app.post('/api/create-order', async (req, res) => {
             quantity: qty,
             eventId,
             eventName: eventName || "Sarami Valentine's Event",
-            status: 'PENDING',
+            status: 'DEBUG_MODE',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        console.log("DEBUG: Order saved with ID:", orderRef.id);
 
-        // Get auth token
+        // 2. Trigger the Webhook/Auth Test
         const token = await getInfinitiPayToken();
 
-        // Clean and validate phone number (Kenya format)
-        let cleanedPhone = payerPhone.replace(/\D/g, ''); // Remove non-digits
-        if (cleanedPhone.startsWith('0')) {
-            cleanedPhone = '254' + cleanedPhone.substring(1);
-        } else if (!cleanedPhone.startsWith('254')) {
-            cleanedPhone = '254' + cleanedPhone;
-        }
+        // 3. For the purpose of this debug, we stop here. 
+        // If you see the request on Webhook.site, your server is working perfectly.
+        res.status(200).json({ 
+            success: true, 
+            message: "Debug request sent to Webhook.site", 
+            orderId: orderRef.id 
+        });
 
-        if (!/^254[17]\d{8}$/.test(cleanedPhone)) {
-            throw new Error("Invalid Kenyan phone number format");
-        }
-
-        const stkPayload = {
-            transactionId: orderRef.id,
-            transactionReference: orderRef.id,
-            amount: Number(amount),
-            merchantId: process.env.INFINITIPAY_MERCHANT_ID?.trim().slice(-3),
-            transactionTypeId: 1,
-            payerAccount: cleanedPhone,
-            narration: `Sarami ${eventName || 'Valentine Ticket'}`,
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL?.trim(),
-            ptyId: 1
-        };
-
-        const result = await axios.post(
-            process.env.INFINITIPAY_STKPUSH_URL?.trim(),
-            stkPayload,
-            {
-                headers: { 'Authorization': `Bearer ${token}` },
-                timeout: 20000
-            }
-        );
-
-        if (result.data.statusCode === 200 || result.data.success === true) {
-            await orderRef.update({ status: 'STK_SENT' });
-            res.status(200).json({ success: true, orderId: orderRef.id });
-        } else {
-            throw new Error(result.data.message || "STK Push rejected");
-        }
     } catch (err) {
-        console.error("Order creation failed:", err.message);
-        if (orderRef) {
-            await orderRef.update({
-                status: 'FAILED',
-                error: err.message
-            }).catch(() => {});
-        }
+        console.error("DEBUG CRASH:", err.message);
         res.status(500).json({
             success: false,
-            debug: err.message || "Internal server error"
+            debug: "Debug Step Failed: " + err.message
         });
     }
 });
 
-// Health check endpoint (good for Render)
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Start server with explicit binding
-app.listen(PORT, '0.0.0.0', (err) => {
-    if (err) {
-        console.error('Failed to start server on port', PORT, ':', err);
-        process.exit(1);
-    }
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server live on port ${PORT}`);
-    console.log(`Health check: https://your-service.onrender.com/health`);
 });
