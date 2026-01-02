@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V4.2
-// FIXED: Brevo Email Logic Restored
+// SARAMI EVENTS TICKETING BACKEND - V4.3
+// FIXED: Puppeteer Render Path + Build Compatibility
 // ==========================================
 
 const express = require('express');
@@ -48,21 +48,23 @@ function getEventDetails(eventId) {
     return eventMap[eventId] || { date: "Feb 14, 2026", venue: "Sarami Venue", color: "#000000" };
 }
 
-// --- NEW: EMAIL SENDING FUNCTION ---
+// --- EMAIL SENDING FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     const meta = getEventDetails(orderData.eventId);
     try {
         await apiInstance.sendTransacEmail({
-            // THIS IS THE SENDER YOU MUST VERIFY IN BREVO
             sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `🎟️ Your Ticket: ${orderData.eventName}`,
             htmlContent: `
-                <div style="font-family: sans-serif; padding: 20px;">
+                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
                     <h1 style="color: ${meta.color}">Ticket Confirmed!</h1>
                     <p>Hi ${orderData.payerName}, your ticket for <b>${orderData.eventName}</b> is ready.</p>
                     <p><b>Venue:</b> ${meta.venue}</p>
-                    <p><b>Download Link:</b> https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}</p>
+                    <p><b>Download Link:</b> <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}">Click Here to Download PDF</a></p>
+                    <hr>
+                    <p style="font-size: 12px; color: #666;">If the link above doesn't work, copy and paste this into your browser:</p>
+                    <p style="font-size: 11px;">https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}</p>
                 </div>`
         });
         console.log("Email sent successfully!");
@@ -104,10 +106,8 @@ app.post('/api/create-order', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // BYPASS LOGIC
         if (BYPASS_PAYMENT) {
             await orderRef.update({ status: 'PAID' });
-            // CALL THE EMAIL FUNCTION HERE
             await sendTicketEmail(req.body, orderRef.id); 
             return res.status(200).json({ success: true, orderId: orderRef.id });
         }
@@ -144,30 +144,52 @@ app.post('/api/create-order', async (req, res) => {
 
 // --- 5. PDF GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
+    let browser;
     try {
         const order = await db.collection('orders').doc(req.params.orderId).get();
         if(!order.exists) return res.status(404).send("Ticket not found");
         
         const data = order.data();
         const meta = getEventDetails(data.eventId);
-        const browser = await puppeteer.launch({ 
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, 
-            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+
+        // Render-optimized Puppeteer Launch
+        browser = await puppeteer.launch({ 
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage', 
+                '--single-process'
+            ] 
         });
+
         const page = await browser.newPage();
         await page.setContent(`
             <div style="border:10px solid ${meta.color}; padding:50px; text-align:center; font-family: sans-serif;">
                 <h1 style="color: ${meta.color}">SARAMI EVENTS</h1>
-                <hr>
-                <h2>${data.eventName}</h2>
-                <p>Guest: ${data.payerName}</p>
-                <p>Venue: ${meta.venue}</p>
-                <img src="https://barcode.tec-it.com/barcode.ashx?data=${order.id}&code=QRCode" width="200">
-            </div>`);
+                <hr style="border: 1px dashed #ccc; margin: 20px 0;">
+                <h2 style="text-transform: uppercase; letter-spacing: 2px;">${data.eventName}</h2>
+                <p style="font-size: 18px;">Guest: <strong>${data.payerName}</strong></p>
+                <p style="font-size: 18px;">Venue: <strong>${meta.venue}</strong></p>
+                <p style="font-size: 18px;">Date: <strong>${meta.date}</strong></p>
+                <div style="margin-top: 30px;">
+                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode" width="200">
+                    <p style="font-family: monospace; font-size: 12px; margin-top: 10px;">REF: ${req.params.orderId}</p>
+                </div>
+            </div>`, { waitUntil: 'networkidle0' });
+
         const pdf = await page.pdf({ format: 'A4', printBackground: true });
-        await browser.close();
-        res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { res.status(500).send(e.message); }
+        
+        res.set({ 
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment; filename=SaramiTicket.pdf'
+        }).send(pdf);
+
+    } catch (e) { 
+        console.error("PDF GENERATION ERROR:", e.message);
+        res.status(500).send("PDF Generation Error: " + e.message); 
+    } finally {
+        if (browser) await browser.close();
+    }
 });
 
 app.listen(PORT, () => console.log(`Server live on ${PORT}`));
