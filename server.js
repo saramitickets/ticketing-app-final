@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V4.3
-// FIXED: Puppeteer Render Path + Build Compatibility
+// SARAMI EVENTS TICKETING BACKEND - V5.1
+// THEME: ROMANTIC VALENTINE LUXURY
 // ==========================================
 
 const express = require('express');
@@ -41,9 +41,9 @@ const PORT = process.env.PORT || 10000;
 // Dynamic Metadata
 function getEventDetails(eventId) {
     const eventMap = {
-        'VAL26-NAIVASHA': { date: "Feb 14, 2026", venue: "Elsamere Resort, Naivasha", color: "#004d40" },
+        'VAL26-NAIVASHA': { date: "Feb 14, 2026", venue: "Elsamere Resort, Naivasha", color: "#6d0505" },
         'VAL26-NAIROBI': { date: "Feb 14, 2026", venue: "Premium Garden, Nairobi", color: "#1e3a8a" },
-        'VAL26-ELDORET': { date: "Feb 14, 2026", venue: "Sirikwa Hotel, Eldoret", color: "#800020" }
+        'VAL26-ELDORET': { date: "Feb 14, 2026", venue: "Sirikwa Hotel, Eldoret", color: "#4a0404" }
     };
     return eventMap[eventId] || { date: "Feb 14, 2026", venue: "Sarami Venue", color: "#000000" };
 }
@@ -55,16 +55,15 @@ async function sendTicketEmail(orderData, orderId) {
         await apiInstance.sendTransacEmail({
             sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
-            subject: `🎟️ Your Ticket: ${orderData.eventName}`,
+            subject: `🎟️ Your Valentine's Ticket: ${orderData.eventName}`,
             htmlContent: `
-                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-                    <h1 style="color: ${meta.color}">Ticket Confirmed!</h1>
-                    <p>Hi ${orderData.payerName}, your ticket for <b>${orderData.eventName}</b> is ready.</p>
+                <div style="font-family: sans-serif; padding: 20px; border: 2px solid #D4AF37; border-radius: 15px; background-color: #fff9f9;">
+                    <h1 style="color: ${meta.color}; text-align: center;">Ticket Confirmed! ❤️</h1>
+                    <p>Hi ${orderData.payerName}, your romantic getaway for <b>${orderData.eventName}</b> is confirmed.</p>
                     <p><b>Venue:</b> ${meta.venue}</p>
-                    <p><b>Download Link:</b> <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}">Click Here to Download PDF</a></p>
-                    <hr>
-                    <p style="font-size: 12px; color: #666;">If the link above doesn't work, copy and paste this into your browser:</p>
-                    <p style="font-size: 11px;">https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}</p>
+                    <p><b>Download Your Ticket:</b> <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}">Click Here</a></p>
+                    <hr style="border: 0.5px solid #D4AF37;">
+                    <p style="font-size: 11px; text-align: center;">Carry this digital ticket for entry. See you at 6:30 PM!</p>
                 </div>`
         });
         console.log("Email sent successfully!");
@@ -142,54 +141,112 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PDF GENERATOR ---
+// --- 5. LUXURY ROMANTIC PDF GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
-        const order = await db.collection('orders').doc(req.params.orderId).get();
-        if(!order.exists) return res.status(404).send("Ticket not found");
+        const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if(!orderDoc.exists) return res.status(404).send("Ticket not found");
         
-        const data = order.data();
+        const data = orderDoc.data();
         const meta = getEventDetails(data.eventId);
 
-        // Render-optimized Puppeteer Launch
         browser = await puppeteer.launch({ 
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', 
-                '--single-process'
-            ] 
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process'] 
         });
 
         const page = await browser.newPage();
-        await page.setContent(`
-            <div style="border:10px solid ${meta.color}; padding:50px; text-align:center; font-family: sans-serif;">
-                <h1 style="color: ${meta.color}">SARAMI EVENTS</h1>
-                <hr style="border: 1px dashed #ccc; margin: 20px 0;">
-                <h2 style="text-transform: uppercase; letter-spacing: 2px;">${data.eventName}</h2>
-                <p style="font-size: 18px;">Guest: <strong>${data.payerName}</strong></p>
-                <p style="font-size: 18px;">Venue: <strong>${meta.venue}</strong></p>
-                <p style="font-size: 18px;">Date: <strong>${meta.date}</strong></p>
-                <div style="margin-top: 30px;">
-                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode" width="200">
-                    <p style="font-family: monospace; font-size: 12px; margin-top: 10px;">REF: ${req.params.orderId}</p>
-                </div>
-            </div>`, { waitUntil: 'networkidle0' });
+        const qrContent = encodeURIComponent(`VALID GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
 
-        const pdf = await page.pdf({ format: 'A4', printBackground: true });
+        await page.setContent(`
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Georgia', serif; background-color: #fff; margin: 0; padding: 0; }
+                    .ticket-wrapper {
+                        width: 175mm; height: 110mm;
+                        margin: 10mm auto;
+                        position: relative;
+                        background: url('https://images.unsplash.com/photo-1518133910546-b6c2fb7d79e3?q=80&w=1000&auto=format&fit=crop'); /* Romantic Backdrop */
+                        background-size: cover;
+                        background-position: center;
+                        border-radius: 25px;
+                        border: 6px solid #D4AF37;
+                        overflow: hidden;
+                        display: flex;
+                        box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+                    }
+                    .overlay {
+                        background: rgba(255, 255, 255, 0.85); /* Frosted glass effect */
+                        flex: 1;
+                        margin: 20px;
+                        border-radius: 15px;
+                        padding: 30px;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: space-between;
+                        border: 1px solid rgba(212, 175, 55, 0.3);
+                    }
+                    .header { text-align: center; }
+                    .event-title { font-size: 28px; font-weight: bold; color: ${meta.color}; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+                    .tagline { color: #D4AF37; font-size: 14px; font-style: italic; margin-top: 5px; }
+                    .main-info { margin-top: 25px; }
+                    .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
+                    .value { font-size: 22px; color: #222; font-weight: bold; margin-bottom: 15px; }
+                    .footer-grid { display: flex; justify-content: space-between; align-items: flex-end; }
+                    .qr-container { text-align: center; }
+                    .qr-container img { border: 3px solid #fff; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+                    .qr-footer { font-size: 9px; font-weight: bold; color: #D4AF37; margin-top: 5px; }
+                    .venue-info { font-size: 14px; color: #444; line-height: 1.5; }
+                </style>
+            </head>
+            <body>
+                <div class="ticket-wrapper">
+                    <div class="overlay">
+                        <div class="header">
+                            <h1 class="event-title">${data.eventName}</h1>
+                            <div class="tagline">A Night of Elegance and Romance</div>
+                        </div>
+
+                        <div class="main-info">
+                            <div class="label">Esteemed Guest</div>
+                            <div class="value">${data.payerName}</div>
+                            
+                            <div class="venue-info">
+                                <strong>Date:</strong> ${meta.date} at 6:30 PM<br>
+                                <strong>Venue:</strong> ${meta.venue}
+                            </div>
+                        </div>
+
+                        <div class="footer-grid">
+                            <div style="font-size: 10px; color: #aaa;">Ref: ${req.params.orderId}</div>
+                            <div class="qr-container">
+                                <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="120">
+                                <div class="qr-footer">SCAN TO ADMIT</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `, { waitUntil: 'networkidle0' });
+
+        const pdf = await page.pdf({ 
+            width: '210mm', height: '148mm', 
+            printBackground: true
+        });
         
         res.set({ 
             'Content-Type': 'application/pdf',
-            'Content-Disposition': 'attachment; filename=SaramiTicket.pdf'
+            'Content-Disposition': 'inline; filename=Sarami_Valentine_Ticket.pdf'
         }).send(pdf);
 
     } catch (e) { 
-        console.error("PDF GENERATION ERROR:", e.message);
-        res.status(500).send("PDF Generation Error: " + e.message); 
+        console.error("PDF ERROR:", e.message);
+        res.status(500).send("PDF Error: " + e.message); 
     } finally {
         if (browser) await browser.close();
     }
 });
 
-app.listen(PORT, () => console.log(`Server live on ${PORT}`));
+app.listen(PORT, () => console.log(`Sarami V5.1 live on ${PORT}`));
