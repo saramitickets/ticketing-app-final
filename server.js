@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V4.0
-// FINAL PRODUCTION READY
+// SARAMI EVENTS TICKETING BACKEND - V4.2
+// FIXED: Brevo Email Logic Restored
 // ==========================================
 
 const express = require('express');
@@ -12,12 +12,14 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 
 // SET TO 'true' only for testing. Set to 'false' for real M-Pesa payments.
-const BYPASS_PAYMENT = false; 
+const BYPASS_PAYMENT = true; 
 
 // --- 1. FIREBASE SETUP ---
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    if (!admin.apps.length) {
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    }
 } catch (error) {
     console.error("Firebase Auth Error:", error.message);
 }
@@ -44,6 +46,29 @@ function getEventDetails(eventId) {
         'VAL26-ELDORET': { date: "Feb 14, 2026", venue: "Sirikwa Hotel, Eldoret", color: "#800020" }
     };
     return eventMap[eventId] || { date: "Feb 14, 2026", venue: "Sarami Venue", color: "#000000" };
+}
+
+// --- NEW: EMAIL SENDING FUNCTION ---
+async function sendTicketEmail(orderData, orderId) {
+    const meta = getEventDetails(orderData.eventId);
+    try {
+        await apiInstance.sendTransacEmail({
+            // THIS IS THE SENDER YOU MUST VERIFY IN BREVO
+            sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
+            to: [{ email: orderData.payerEmail, name: orderData.payerName }],
+            subject: `🎟️ Your Ticket: ${orderData.eventName}`,
+            htmlContent: `
+                <div style="font-family: sans-serif; padding: 20px;">
+                    <h1 style="color: ${meta.color}">Ticket Confirmed!</h1>
+                    <p>Hi ${orderData.payerName}, your ticket for <b>${orderData.eventName}</b> is ready.</p>
+                    <p><b>Venue:</b> ${meta.venue}</p>
+                    <p><b>Download Link:</b> https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}</p>
+                </div>`
+        });
+        console.log("Email sent successfully!");
+    } catch (err) {
+        console.error("BREVO ERROR:", err.response ? err.response.body : err.message);
+    }
 }
 
 // --- 3. INFINITIPAY AUTH ---
@@ -79,8 +104,11 @@ app.post('/api/create-order', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
+        // BYPASS LOGIC
         if (BYPASS_PAYMENT) {
             await orderRef.update({ status: 'PAID' });
+            // CALL THE EMAIL FUNCTION HERE
+            await sendTicketEmail(req.body, orderRef.id); 
             return res.status(200).json({ success: true, orderId: orderRef.id });
         }
 
@@ -90,11 +118,11 @@ app.post('/api/create-order', async (req, res) => {
             transactionId: orderRef.id,
             transactionReference: orderRef.id,
             amount: Number(amount),
-            merchantId: process.env.INFINITIPAY_MERCHANT_ID.trim().slice(-3),
+            merchantId: (process.env.INFINITIPAY_MERCHANT_ID || "").trim().slice(-3),
             transactionTypeId: 1,
             payerAccount: cleanedPhone,
             narration: `Sarami ${eventName}`,
-            callbackURL: process.env.YOUR_APP_CALLBACK_URL.trim(),
+            callbackURL: (process.env.YOUR_APP_CALLBACK_URL || "").trim(),
             ptyId: 1
         };
 
@@ -118,18 +146,25 @@ app.post('/api/create-order', async (req, res) => {
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     try {
         const order = await db.collection('orders').doc(req.params.orderId).get();
+        if(!order.exists) return res.status(404).send("Ticket not found");
+        
         const data = order.data();
         const meta = getEventDetails(data.eventId);
         const browser = await puppeteer.launch({ 
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, 
-            args: ['--no-sandbox'] 
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, 
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
         });
         const page = await browser.newPage();
-        await page.setContent(`<div style="border:10px solid ${meta.color}; padding:50px; text-align:center;">
-            <h1>${data.eventName}</h1><p>Guest: ${data.payerName}</p>
-            <img src="https://barcode.tec-it.com/barcode.ashx?data=${order.id}&code=QRCode">
-        </div>`);
-        const pdf = await page.pdf({ format: 'A4' });
+        await page.setContent(`
+            <div style="border:10px solid ${meta.color}; padding:50px; text-align:center; font-family: sans-serif;">
+                <h1 style="color: ${meta.color}">SARAMI EVENTS</h1>
+                <hr>
+                <h2>${data.eventName}</h2>
+                <p>Guest: ${data.payerName}</p>
+                <p>Venue: ${meta.venue}</p>
+                <img src="https://barcode.tec-it.com/barcode.ashx?data=${order.id}&code=QRCode" width="200">
+            </div>`);
+        const pdf = await page.pdf({ format: 'A4', printBackground: true });
         await browser.close();
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
     } catch (e) { res.status(500).send(e.message); }
