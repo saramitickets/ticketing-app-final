@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V5.9
-// STYLED SHAPES + ALIGNED MULTI-PAGE PDF
+// SARAMI EVENTS TICKETING BACKEND - V6.0
+// FINAL STYLED & ALIGNED MULTI-PAGE PDF
 // ==========================================
 
 const express = require('express');
@@ -12,15 +12,17 @@ const admin = require('firebase-admin');
 
 const BYPASS_PAYMENT = true; 
 
-// --- FIREBASE & BREVO SETUP ---
+// --- 1. FIREBASE SETUP ---
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-} catch (error) { console.error("Firebase Auth Error:", error.message); }
+} catch (error) { console.error("Firebase Error:", error.message); }
 
 const db = admin.firestore();
+
+// --- 2. BREVO SETUP ---
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -31,7 +33,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Historic Venue Metadata
+const PORT = process.env.PORT || 10000;
+
+// Dynamic Metadata with History
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
         'NAIVASHA': {
@@ -62,28 +66,28 @@ function getEventDetails(eventId, packageTier = 'BRONZE') {
     };
 }
 
-// --- UPDATED EMAIL (Vertical Footer) ---
+// --- 3. UPDATED EMAIL (Vertical Footer & Removed Spam Note) ---
 async function sendTicketEmail(orderData, orderId) {
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
         await apiInstance.sendTransacEmail({
             sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
-            subject: `💌 Your Official Ticket: ${orderData.eventName}`,
+            subject: `💌 Invitation: ${orderData.eventName}`,
             htmlContent: `
-                <div style="font-family: 'Times New Roman', serif; border: 2px solid #D4AF37; padding: 40px; border-radius: 20px; background: #fffdf9; max-width: 600px; margin: auto;">
-                    <h1 style="color: ${meta.color}; text-align: center; font-size: 28px;">Invitation Confirmed! ❤️</h1>
-                    <p style="text-align: center; font-size: 16px;">Hi <b>${orderData.payerName}</b>, your reservation for <b>${meta.packageName}</b> at ${meta.venue} is secured.</p>
+                <div style="font-family: serif; border: 2px solid #D4AF37; padding: 40px; border-radius: 20px; background: #fffdf9; max-width: 600px; margin: auto;">
+                    <h1 style="color: ${meta.color}; text-align: center;">Invitation Confirmed! ❤️</h1>
+                    <p style="text-align: center;">Hi <b>${orderData.payerName}</b>, your reservation for <b>${meta.packageName}</b> at ${meta.venue} is ready.</p>
                     
-                    <div style="text-align: center; margin: 40px 0;">
+                    <div style="text-align: center; margin: 30px 0;">
                         <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                           style="background: ${meta.color}; color: white; padding: 18px 35px; text-decoration: none; border-radius: 8px; font-weight: bold; font-family: Arial, sans-serif; letter-spacing: 1px;">
+                           style="background: ${meta.color}; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
                            DOWNLOAD PDF TICKET
                         </a>
                     </div>
 
-                    <div style="border-top: 1px solid #D4AF37; padding-top: 20px; text-align: center; font-family: Arial, sans-serif; font-size: 12px; color: #444; line-height: 1.8;">
-                        <strong style="font-size: 14px; color: ${meta.color};">Sarami Events</strong><br>
+                    <div style="border-top: 1px solid #D4AF37; padding-top: 20px; text-align: center; font-size: 13px; line-height: 1.6; color: #444;">
+                        <b style="font-size: 15px; color: ${meta.color};">Sarami Events</b><br>
                         1st Ngong Avenue, Bishop Gardens Tower, Upperhill<br>
                         www.saramievents.co.ke | +254 104 410 892
                     </div>
@@ -92,6 +96,7 @@ async function sendTicketEmail(orderData, orderId) {
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
+// --- 4. CREATE ORDER ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     try {
@@ -100,6 +105,7 @@ app.post('/api/create-order', async (req, res) => {
             eventId, packageTier, eventName, status: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
+
         if (BYPASS_PAYMENT) {
             await orderRef.update({ status: 'PAID' });
             await sendTicketEmail(req.body, orderRef.id); 
@@ -108,7 +114,7 @@ app.post('/api/create-order', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, debug: err.message }); }
 });
 
-// --- STYLED SHAPES PDF GENERATOR ---
+// --- 5. STYLED MULTI-PAGE PDF GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -119,125 +125,80 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
 
         browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
         const page = await browser.newPage();
-        const qrContent = encodeURIComponent(`VALID GUEST: ${data.payerName} | PKG: ${meta.packageName} | REF: ${req.params.orderId}`);
+        const qrContent = encodeURIComponent(`GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
 
         await page.setContent(`
             <html>
             <head>
                 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
                 <style>
-                    body { margin: 0; padding: 0; background-color: #f4f4f4; }
-                    .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; background: white; page-break-after: always; }
-                    .ticket-border {
-                        position: absolute; top: 10mm; left: 10mm; right: 10mm; bottom: 10mm;
-                        border: 2px solid #D4AF37; border-radius: 20px; background: white;
-                        box-shadow: 0 0 20px rgba(0,0,0,0.05);
-                    }
-                    .header-pill {
-                        background: ${meta.color}; width: 100%; height: 60px;
-                        border-top-left-radius: 18px; border-top-right-radius: 18px;
-                        display: flex; align-items: center; justify-content: center;
-                    }
-                    .header-pill h1 { color: #D4AF37; font-family: 'Playfair Display', serif; margin: 0; letter-spacing: 4px; font-size: 28px; }
+                    body { margin: 0; padding: 0; background: #fff; }
+                    .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; }
+                    .border { position: absolute; inset: 10mm; border: 3px solid #D4AF37; border-radius: 25px; background: #fff; }
+                    .header { background: ${meta.color}; height: 65px; border-radius: 22px 22px 0 0; display: flex; align-items: center; justify-content: center; }
+                    .header h1 { color: #D4AF37; font-family: 'Playfair Display', serif; letter-spacing: 5px; margin: 0; }
                     
-                    .body-content { padding: 25px; display: flex; flex-direction: column; height: 350px; justify-content: space-between; }
+                    .content { padding: 30px; display: flex; flex-direction: column; height: 340px; justify-content: space-between; }
+                    .venue-box { border-left: 5px solid ${meta.color}; padding-left: 15px; }
+                    .name-shape { background: #fffcf0; padding: 20px; border-radius: 15px; border: 1px solid #D4AF37; margin: 15px 0; }
                     
-                    /* Luxury Information Shapes */
-                    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-                    .shape-box {
-                        background: #fffcf0; border-left: 5px solid ${meta.color};
-                        padding: 15px; border-radius: 10px; position: relative;
-                    }
-                    .label { font-family: 'Montserrat', sans-serif; font-size: 9px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
-                    .value { font-family: 'Playfair Display', serif; font-size: 18px; color: #111; }
-
-                    .name-shape {
-                        background: linear-gradient(to right, #fff9e6, #fff);
-                        padding: 20px; border-radius: 15px; border: 1px solid #D4AF37; margin: 15px 0;
-                    }
-                    .qr-container { position: absolute; bottom: 25px; right: 25px; text-align: center; }
-                    .footer-vertical {
-                        position: absolute; bottom: 15px; left: 25px;
-                        font-family: 'Montserrat', sans-serif; font-size: 9px; line-height: 1.6; color: #666;
-                    }
+                    .label { font-family: 'Montserrat', sans-serif; font-size: 10px; color: #888; text-transform: uppercase; margin-bottom: 5px; }
+                    .val { font-family: 'Playfair Display', serif; font-size: 20px; color: #111; }
+                    
+                    .qr-pos { position: absolute; bottom: 30px; right: 30px; text-align: center; }
+                    .footer-v { position: absolute; bottom: 20px; left: 30px; font-family: 'Montserrat'; font-size: 9px; line-height: 1.6; color: #444; }
                 </style>
             </head>
             <body>
                 <div class="page">
-                    <div class="ticket-border">
-                        <div class="header-pill"><h1>SARAMI EVENTS</h1></div>
-                        <div class="body-content">
-                            <div>
-                                <div style="font-family: 'Playfair Display', serif; font-size: 22px; color: ${meta.color};">${meta.venue}</div>
-                                <div style="font-family: 'Montserrat', sans-serif; font-size: 10px; font-style: italic; color: #999; margin-top: 3px;">${meta.history}</div>
+                    <div class="border">
+                        <div class="header"><h1>SARAMI EVENTS</h1></div>
+                        <div class="content">
+                            <div class="venue-box">
+                                <div style="font-family: 'Playfair Display', serif; font-size: 24px;">${meta.venue}</div>
+                                <div style="font-family: 'Montserrat'; font-size: 10px; color: #999; font-style: italic;">${meta.history}</div>
+                                <div style="margin-top: 5px; display: inline-block; padding: 4px 12px; background: #fff9e6; border-radius: 20px; font-family: 'Montserrat'; font-size: 10px; font-weight: bold; color: ${meta.color}; border: 1px solid #D4AF37;">${meta.packageName}</div>
                             </div>
-
                             <div class="name-shape">
                                 <div class="label">Esteemed Guest</div>
-                                <div style="font-family: 'Playfair Display', serif; font-size: 28px; color: #000;">${data.payerName}</div>
+                                <div style="font-family: 'Playfair Display', serif; font-size: 30px;">${data.payerName}</div>
                             </div>
-
-                            <div class="info-grid">
-                                <div class="shape-box">
-                                    <div class="label">Date & Time</div>
-                                    <div class="value">${meta.date} | ${meta.time}</div>
-                                </div>
-                                <div class="shape-box">
-                                    <div class="label">Experience Tier</div>
-                                    <div class="value" style="color: ${meta.color}">${meta.packageName}</div>
-                                </div>
-                            </div>
-
-                            <div style="margin-top: 20px;">
-                                <div class="label" style="color: #D4AF37">Total Payment Verified</div>
-                                <div style="font-family: 'Playfair Display', serif; font-size: 32px; color: ${meta.color};">KES ${data.amount.toLocaleString()}</div>
+                            <div style="display: flex; gap: 40px;">
+                                <div><div class="label">Date & Time</div><div class="val">${meta.date} | ${meta.time}</div></div>
+                                <div><div class="label">Fee Paid</div><div class="val" style="color: ${meta.color}">KES ${data.amount.toLocaleString()}</div></div>
                             </div>
                         </div>
-
-                        <div class="qr-container">
+                        <div class="qr-pos">
                             <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="120">
-                            <div class="label" style="margin-top: 5px; font-weight: bold; color: #D4AF37;">SCAN ADMISSION</div>
+                            <div class="label" style="font-weight: bold; color: #D4AF37;">SCAN ADMISSION</div>
                         </div>
-
                         <div class="footer-vertical">
-                            <strong>Sarami Events</strong><br>
+                            <b style="color: ${meta.color}">Sarami Events</b><br>
                             Bishop Gardens Tower, Upperhill<br>
                             REF: ${req.params.orderId}
                         </div>
                     </div>
                 </div>
 
-                <div class="page" style="page-break-after: auto;">
-                    <div class="ticket-border">
-                        <div class="header-pill"><h1>THE PROGRAM</h1></div>
-                        <div class="body-content" style="justify-content: flex-start; padding: 40px;">
-                            <div style="margin-bottom: 25px; display: flex; align-items: flex-start;">
-                                <div style="width: 70px; font-weight: bold; color: #D4AF37; font-family: 'Montserrat';">18:30</div>
-                                <div style="flex: 1; border-left: 1px solid #eee; padding-left: 15px;">
-                                    <b style="font-family: 'Playfair Display'; font-size: 18px;">Welcoming Cocktails</b><br>
-                                    <span style="font-size: 12px; color: #666;">Chilled glasses & ambient music upon arrival.</span>
-                                </div>
+                <div class="page">
+                    <div class="border">
+                        <div class="header"><h1>THE PROGRAM</h1></div>
+                        <div class="content" style="justify-content: flex-start; padding-top: 40px;">
+                            <div style="margin-bottom: 25px; display: flex; gap: 20px;">
+                                <div style="font-weight: bold; color: #D4AF37; width: 60px;">18:30</div>
+                                <div><b style="font-family: 'Playfair Display';">Welcoming Cocktails</b><br><small style="color: #666;">Chilled glasses upon arrival.</small></div>
                             </div>
-                            <div style="margin-bottom: 25px; display: flex; align-items: flex-start;">
-                                <div style="width: 70px; font-weight: bold; color: #D4AF37; font-family: 'Montserrat';">19:00</div>
-                                <div style="flex: 1; border-left: 1px solid #eee; padding-left: 15px;">
-                                    <b style="font-family: 'Playfair Display'; font-size: 18px;">Ice-Breaking & Games</b><br>
-                                    <span style="font-size: 12px; color: #666;">Couples karaoke & bonding sessions.</span>
-                                </div>
+                            <div style="margin-bottom: 25px; display: flex; gap: 20px;">
+                                <div style="font-weight: bold; color: #D4AF37; width: 60px;">19:00</div>
+                                <div><b style="font-family: 'Playfair Display';">Ice-Breaking & Karaoke</b><br><small style="color: #666;">Fun games and melody.</small></div>
                             </div>
-                            <div style="margin-bottom: 25px; display: flex; align-items: flex-start;">
-                                <div style="width: 70px; font-weight: bold; color: #D4AF37; font-family: 'Montserrat';">20:00</div>
-                                <div style="flex: 1; border-left: 1px solid #eee; padding-left: 15px;">
-                                    <b style="font-family: 'Playfair Display'; font-size: 18px;">Grand Banquet</b><br>
-                                    <span style="font-size: 12px; color: #666;">A luxury 3-course romantic dinner experience.</span>
-                                </div>
+                            <div style="margin-bottom: 25px; display: flex; gap: 20px;">
+                                <div style="font-weight: bold; color: #D4AF37; width: 60px;">20:00</div>
+                                <div><b style="font-family: 'Playfair Display';">Grand Banquet</b><br><small style="color: #666;">A luxury 3-course romantic dinner.</small></div>
                             </div>
-                            <div style="display: flex; align-items: flex-start;">
-                                <div style="width: 70px; font-weight: bold; color: #D4AF37; font-family: 'Montserrat';">21:30</div>
-                                <div style="flex: 1; border-left: 1px solid #eee; padding-left: 15px;">
-                                    <b style="font-family: 'Playfair Display'; font-size: 18px;">Celebrations</b><br>
-                                    <span style="font-size: 12px; color: #666;">The night continues until late.</span>
-                                </div>
+                            <div style="display: flex; gap: 20px;">
+                                <div style="font-weight: bold; color: #D4AF37; width: 60px;">21:30</div>
+                                <div><b style="font-family: 'Playfair Display';">Celebrations</b><br><small style="color: #666;">The night continues until late.</small></div>
                             </div>
                         </div>
                     </div>
@@ -251,4 +212,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V5.9 Styled Live`));
+app.listen(PORT, () => console.log(`Sarami V6.0 Live`));
