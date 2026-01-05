@@ -10,7 +10,7 @@ const puppeteer = require('puppeteer');
 require('dotenv').config();
 const admin = require('firebase-admin');
 
-const BYPASS_PAYMENT = false; 
+const BYPASS_PAYMENT = true; 
 
 // --- FIREBASE & BREVO SETUP ---
 try {
