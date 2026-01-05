@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V6.4
-// FINAL: FIXED PROGRAM + COLORFUL PRICE SHAPE
+// SARAMI EVENTS TICKETING BACKEND - V6.5
+// FINAL: ADVANCED FIRESTORE LOGS + V6.4 DESIGN
 // ==========================================
 
 const express = require('express');
@@ -103,23 +103,45 @@ async function sendTicketEmail(orderData, orderId) {
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
+// --- UPDATED MAIN ROUTE WITH SEARCHABLE LOGS & DASHBOARD SYNC ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
+    
+    // Searchable log for Render
+    console.log(`[BOOKING_INITIATED] - User: ${payerName} | Phone: ${payerPhone} | Package: ${eventName}`);
+
+    let orderRef;
     try {
-        const orderRef = await db.collection('orders').add({
+        // Step 1: Create the record in Firestore immediately
+        orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
-            eventId, packageTier, eventName, status: 'PENDING',
+            eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        
+        console.log(`[FIRESTORE_SYNC] - Document ID: ${orderRef.id}`);
+
         if (BYPASS_PAYMENT) {
-            await orderRef.update({ status: 'PAID' });
+            console.log(`[BYPASS_MODE] - Auto-approving payment for ${payerName}`);
+            await orderRef.update({ status: 'PAID', completedAt: admin.firestore.FieldValue.serverTimestamp() });
             await sendTicketEmail(req.body, orderRef.id); 
             return res.status(200).json({ success: true, orderId: orderRef.id });
+        } else {
+            // This logic will communicate with Peter's whitelisted gateway
+            console.log(`[GATEWAY_ATTEMPT] - Connecting to DTB Moja for ${payerName}...`);
+            // Place your triggerMpesaPush logic here when ready
+            throw new Error("Gateway connection pending IP Whitelisting");
         }
-    } catch (err) { res.status(500).json({ success: false, debug: err.message }); }
+    } catch (err) {
+        console.error(`[BOOKING_ERROR] - ${err.message}`);
+        if (orderRef) {
+            await orderRef.update({ status: 'FAILED', errorMessage: err.message });
+        }
+        res.status(500).json({ success: false, debug: err.message });
+    }
 });
 
-// --- PDF GENERATOR (FIXED PROGRAM + STYLED PRICE) ---
+// --- PDF GENERATOR (STRICTLY V6.4 DESIGN) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -222,4 +244,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V6.4 Final Polished Live`));
+app.listen(PORT, () => console.log(`Sarami V6.5 Final Polished Live`));
