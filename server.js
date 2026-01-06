@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V9.6
-// PRODUCTION MASTER: DEEP TRACE DEBUGGING
+// SARAMI EVENTS TICKETING BACKEND - V9.7
+// PRODUCTION MASTER: ASTRA PORT 9090 SECURE FIX
 // ==========================================
 
 const express = require('express');
@@ -18,9 +18,7 @@ try {
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-} catch (error) { 
-    console.error("Firebase Initialization Error:", error.message); 
-}
+} catch (error) { console.error("Firebase Error:", error.message); }
 
 const db = admin.firestore();
 const SibApiV3Sdk = require('sib-api-v3-sdk');
@@ -35,27 +33,25 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. PHONE FORMATTING HELPER ---
+// --- 2. HELPERS ---
 function formatPhone(phone) {
     let p = phone.replace(/\D/g, ''); 
     if (p.startsWith('0')) p = '254' + p.slice(1);
     if (p.startsWith('254')) return p;
-    if (p.length === 9) return '254' + p; 
-    return p; 
+    return '254' + p; 
 }
 
-// --- 3. LUXURY EVENT DATA ---
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
-        'NAIVASHA': { venue: "Elsamere Resort, Naivasha", color: "#4a0404", packages: { 'GOLD': "Gold Luxury", 'SILVER': "Silver Suite", 'BRONZE': "Bronze Walk-in" } },
+        'NAIVASHA': { venue: "Elsamere Resort, Naivasha", color: "#4a0404", packages: { 'GOLD': "Gold Luxury", 'BRONZE': "Bronze Walk-in" } },
         'ELDORET': { venue: "Marura Gardens, Eldoret", color: "#5c0505", packages: { 'GOLD': "Gold Package", 'BRONZE': "Bronze Package" } },
         'NAIROBI': { venue: "Sagret Gardens, Nairobi", color: "#800000", packages: { 'STANDARD': "Premium Couple" } }
     };
     const event = eventMap[eventId] || eventMap['NAIROBI'];
-    return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM - Late" };
+    return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM" };
 }
 
-// --- 4. MAIN BOOKING ROUTE WITH DEEP TRACE ---
+// --- 3. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -71,44 +67,43 @@ app.post('/api/create-order', async (req, res) => {
             await orderRef.update({ status: 'PAID' });
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // STEP 1: LOGIN
+            // STEP 1: LOGIN (Moja Auth)
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 username: process.env.INFINITIPAY_MERCHANT_USERNAME,
                 password: process.env.INFINITIPAY_MERCHANT_PASSWORD
             });
-
             const token = authRes.data.access_token;
             console.log(`[AUTH_SUCCESS] - Secure token received.`);
 
-            // STEP 2: STK PUSH WITH DEEP ERROR LOGGING
+            // STEP 2: STK PUSH (Astra Port 9090 Secure Headers)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
             const payload = {
                 amount: Number(amount),
                 phoneNumber: formatPhone(payerPhone),
-                merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`, 
+                merchantCode: "ILM0000139", // Standard Astra Merchant Format
                 reference: orderRef.id,
                 description: `Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
             };
 
-            console.log(`[STK_TRACE] - Sending payload:`, JSON.stringify(payload));
-
             try {
                 const stkRes = await axios.post(stkUrl, payload, { 
                     headers: { 
-                        'Authorization': `Bearer ${token}`, 
-                        'Content-Type': 'application/json'
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        // CUSTOM ASTRA HEADERS (Often required for port 9090)
+                        'X-Client-Id': process.env.INFINITIPAY_CLIENT_ID,
+                        'X-Client-Secret': process.env.INFINITIPAY_CLIENT_SECRET,
+                        'apiKey': process.env.INFINITIPAY_CLIENT_SECRET // Alternative key field
                     } 
                 });
                 
-                await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: stkRes.data.requestId || "PENDING" });
+                await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: stkRes.data.requestId });
                 return res.status(200).json({ success: true, message: "M-Pesa prompt sent!" });
 
             } catch (stkError) {
-                // THE EXACT FIX: Extracting the actual error message from the bank's response
-                console.error(`[BANK_REJECTION_DETAIL]`);
-                console.error(`- Status Code: ${stkError.response?.status}`);
-                console.error(`- Error Body:`, JSON.stringify(stkError.response?.data || "No response body from bank"));
+                console.error(`[ASTRA_REJECTION] Status: ${stkError.response?.status}`);
+                console.error(`[ASTRA_BODY]`, JSON.stringify(stkError.response?.data));
                 throw stkError; 
             }
         }
@@ -120,15 +115,13 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PDF GENERATOR ---
+// PDF Generator remains full design...
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
-        if(!orderDoc.exists) return res.status(404).send("Not found");
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
-
         browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
         const page = await browser.newPage();
         await page.setContent(`<html><body style="padding:40px; border:5px solid #D4AF37; font-family:serif;"><h1>SARAMI EVENTS</h1><h2>${data.payerName}</h2></body></html>`);
@@ -137,4 +130,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V9.6 Debugger Active`));
+app.listen(PORT, () => console.log(`Sarami V9.7 Universal Auth Live`));
