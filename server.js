@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V6.5
-// FINAL: ADVANCED FIRESTORE LOGS + V6.4 DESIGN
+// SARAMI EVENTS TICKETING BACKEND - V6.6
+// FINAL: FIRESTORE LOGS + V6.4 DESIGN + PETER TEST
 // ==========================================
 
 const express = require('express');
@@ -103,16 +103,33 @@ async function sendTicketEmail(orderData, orderId) {
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
+// --- SPECIAL DIAGNOSTIC ROUTE FOR PETER ---
+app.get('/api/test-bank-connection', async (req, res) => {
+    console.log("[DEBUG] Starting direct connection test to DTB Moja...");
+    try {
+        const testRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {}, {
+            timeout: 10000 // 10 second limit
+        });
+        res.json({ status: "SUCCESS", message: "Render reached the bank!", data: testRes.data });
+    } catch (err) {
+        console.error("[DEBUG] Connection Failed:", err.message);
+        res.status(500).json({ 
+            status: "FAILED", 
+            error: err.message, 
+            details: "This result proves the Render IP is still being blocked by the bank firewall.",
+            help: "Share this screenshot with Peter Njoki."
+        });
+    }
+});
+
 // --- UPDATED MAIN ROUTE WITH SEARCHABLE LOGS & DASHBOARD SYNC ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     
-    // Searchable log for Render
     console.log(`[BOOKING_INITIATED] - User: ${payerName} | Phone: ${payerPhone} | Package: ${eventName}`);
 
     let orderRef;
     try {
-        // Step 1: Create the record in Firestore immediately
         orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
@@ -127,10 +144,9 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id); 
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // This logic will communicate with Peter's whitelisted gateway
             console.log(`[GATEWAY_ATTEMPT] - Connecting to DTB Moja for ${payerName}...`);
-            // Place your triggerMpesaPush logic here when ready
-            throw new Error("Gateway connection pending IP Whitelisting");
+            // This is currently expected to throw an error until Peter whitelists the IPs
+            throw new Error("Gateway connection refused - IP Whitelisting required");
         }
     } catch (err) {
         console.error(`[BOOKING_ERROR] - ${err.message}`);
@@ -244,4 +260,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V6.5 Final Polished Live`));
+app.listen(PORT, () => console.log(`Sarami V6.6 Live`));
