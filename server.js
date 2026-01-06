@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V8.3
-// COMPLETE: SECURE M-PESA + LUXURY E-TICKET + PDF
+// SARAMI EVENTS TICKETING BACKEND - V8.4
+// PRODUCTION: SECURE M-PESA + LUXURY DESIGN + DEBUG
 // ==========================================
 
 const express = require('express');
@@ -99,7 +99,7 @@ async function sendTicketEmail(orderData, orderId) {
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
-// --- MAIN BOOKING ROUTE ---
+// --- MAIN BOOKING ROUTE WITH DEBUG LOGGER ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -118,29 +118,47 @@ app.post('/api/create-order', async (req, res) => {
         } else {
             console.log(`[GATEWAY_ATTEMPT] - Secure login initiated...`);
             
-            // 1. LOGIN TO BANK USING ENVIRONMENT POINTERS
-            const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
-                username: process.env.INFINITIPAY_MERCHANT_USERNAME,
-                password: process.env.INFINITIPAY_MERCHANT_PASSWORD
-            });
+            // 1. LOGIN TO BANK WITH DEBUG LOGGING
+            const loginUrl = 'https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login';
+            try {
+                const authRes = await axios({
+                    method: 'post',
+                    url: loginUrl,
+                    data: {
+                        username: process.env.INFINITIPAY_MERCHANT_USERNAME,
+                        password: process.env.INFINITIPAY_MERCHANT_PASSWORD
+                    },
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 15000
+                });
 
-            const token = authRes.data.access_token;
+                const token = authRes.data.access_token;
+                console.log(`[AUTH_SUCCESS] - Secure token obtained.`);
 
-            // 2. TRIGGER STK PUSH (M-PESA PROMPT)
-            const stkRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/stk/push', {
-                amount: amount,
-                phoneNumber: payerPhone,
-                merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`,
-                reference: orderRef.id,
-                description: `Ticket: ${eventName}`
-            }, { headers: { 'Authorization': `Bearer ${token}` } });
+                // 2. TRIGGER STK PUSH (M-PESA PROMPT)
+                const stkRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/stk/push', {
+                    amount: amount,
+                    phoneNumber: payerPhone,
+                    merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`,
+                    reference: orderRef.id,
+                    description: `Ticket: ${eventName}`
+                }, { headers: { 'Authorization': `Bearer ${token}` } });
 
-            await orderRef.update({ 
-                status: 'STK_PUSH_SENT', 
-                bankRequestId: stkRes.data.requestId 
-            });
+                await orderRef.update({ 
+                    status: 'STK_PUSH_SENT', 
+                    bankRequestId: stkRes.data.requestId 
+                });
 
-            return res.status(200).json({ success: true, message: "M-Pesa prompt sent!" });
+                return res.status(200).json({ success: true, message: "M-Pesa prompt sent!" });
+
+            } catch (gatewayErr) {
+                // DETAILED DIAGNOSTICS FOR RENDER LOGS
+                console.error(`[DEBUG_GATEWAY_ERROR]`);
+                console.error(`- URL attempted: ${gatewayErr.config?.url}`);
+                console.error(`- HTTP Status: ${gatewayErr.response?.status}`);
+                console.error(`- Response Data:`, JSON.stringify(gatewayErr.response?.data));
+                throw gatewayErr; // Pass to main catch
+            }
         }
     } catch (err) {
         const errorDetail = err.response?.data?.message || err.message;
@@ -237,4 +255,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami Production Live`));
+app.listen(PORT, () => console.log(`Sarami V8.4 Production Live`));
