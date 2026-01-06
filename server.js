@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V8.8
-// PRODUCTION MASTER: ASTRA PUSH + LUXURY PDF + EMAILS
+// SARAMI EVENTS TICKETING BACKEND - V8.9
+// PRODUCTION MASTER: ASTRA 401 FIX + LUXURY DESIGN
 // ==========================================
 
 const express = require('express');
@@ -38,7 +38,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. LUXURY EVENT DATA & METADATA ---
+// --- 2. LUXURY EVENT DATA ---
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
         'NAIVASHA': {
@@ -101,10 +101,7 @@ async function sendTicketEmail(orderData, orderId) {
                     </td></tr>
                 </table>`
         });
-        console.log(`[EMAIL_SENT] - Ticket sent to ${orderData.payerEmail}`);
-    } catch (err) { 
-        console.error("Email Sending Error:", err.message); 
-    }
+    } catch (err) { console.error("Email Error:", err.message); }
 }
 
 // --- 4. MAIN BOOKING ROUTE ---
@@ -113,45 +110,46 @@ app.post('/api/create-order', async (req, res) => {
     let orderRef;
     
     try {
-        // Step 1: Record the order in Firestore
         orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // Step 2: Handle Bypass (Testing Mode)
         if (BYPASS_PAYMENT) {
             await orderRef.update({ status: 'PAID' });
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // Step 3: Secure Bank Login
-            console.log(`[GATEWAY_ATTEMPT] - Logging in as: ${process.env.INFINITIPAY_MERCHANT_USERNAME}`);
+            // STEP 1: LOGIN (Successful in V8.8 logs)
+            console.log(`[GATEWAY_ATTEMPT] - Logging in as: rotsieno`);
             
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 username: process.env.INFINITIPAY_MERCHANT_USERNAME,
                 password: process.env.INFINITIPAY_MERCHANT_PASSWORD
-            }, { timeout: 15000 });
+            });
 
             const token = authRes.data.access_token;
             console.log(`[AUTH_SUCCESS] - Secure token received.`);
 
-            // Step 4: Trigger STK Push (Astra Africa Endpoint)
+            // STEP 2: TRIGGER STK PUSH (Astra Endpoint Fix)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
-            console.log(`[STK_INITIATING] - Sending request to: ${stkUrl}`);
+            console.log(`[STK_INITIATING] - Attempting push to: ${stkUrl}`);
 
             const stkRes = await axios.post(stkUrl, {
                 amount: amount,
                 phoneNumber: payerPhone,
+                // Using Merchant ID from Env to build the code
                 merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`,
                 reference: orderRef.id,
-                description: `Sarami Ticket: ${eventName}`,
+                description: `Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
             }, { 
                 headers: { 
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json' 
+                    'Content-Type': 'application/json',
+                    // Added X-Header to resolve 401 Unauthorized
+                    'X-Merchant-Id': process.env.INFINITIPAY_MERCHANT_ID 
                 } 
             });
 
@@ -160,34 +158,28 @@ app.post('/api/create-order', async (req, res) => {
                 bankRequestId: stkRes.data.requestId || "PENDING" 
             });
 
-            return res.status(200).json({ success: true, message: "M-Pesa prompt sent to your phone!" });
+            return res.status(200).json({ success: true, message: "M-Pesa prompt sent!" });
         }
     } catch (err) {
         const errorDetail = err.response?.data?.message || err.message;
         console.error(`[BOOKING_ERROR] - ${errorDetail}`);
-        
-        if (orderRef) {
-            await orderRef.update({ status: 'FAILED', errorMessage: errorDetail });
-        }
+        if (orderRef) await orderRef.update({ status: 'FAILED', errorMessage: errorDetail });
         res.status(500).json({ success: false, debug: errorDetail });
     }
 });
 
-// --- 5. LUXURY PDF TICKET GENERATOR ---
+// --- 5. PDF GENERATOR (LUXURY DESIGN) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
-        if(!orderDoc.exists) return res.status(404).send("Ticket record not found");
-        
+        if(!orderDoc.exists) return res.status(404).send("Not found");
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
-        browser = await puppeteer.launch({ 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] 
-        });
+        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
         const page = await browser.newPage();
-        const qrContent = encodeURIComponent(`VALID_GUEST: ${data.payerName} | ORDER_ID: ${req.params.orderId}`);
+        const qrContent = encodeURIComponent(`GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
 
         await page.setContent(`
             <html>
@@ -204,10 +196,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                     .border-frame { position: absolute; inset: 10mm; border: 3px solid #D4AF37; border-radius: 25px; background: rgba(255,255,255,0.96); z-index: 2; display: flex; flex-direction: column; overflow: hidden; }
                     .header { background: ${meta.color}; height: 50px; display: flex; align-items: center; justify-content: center; color: #D4AF37; font-family: 'Playfair Display'; letter-spacing: 5px; font-size: 22px; }
                     .content { padding: 25px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; position: relative; }
-                    .name-shape { background: #fffcf0; padding: 15px; border-radius: 12px; border-left: 6px solid ${meta.color}; margin: 10px 0; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }
+                    .name-shape { background: #fffcf0; padding: 15px; border-radius: 12px; border-left: 6px solid ${meta.color}; margin: 10px 0; }
                     .qr-area { position: absolute; bottom: 25px; right: 25px; text-align: center; }
-                    .label { font-family: 'Montserrat'; font-size: 8px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
-                    .val { font-family: 'Playfair Display'; font-size: 16px; color: #333; }
+                    .label { font-family: 'Montserrat'; font-size: 8px; color: #aaa; text-transform: uppercase; }
                 </style>
             </head>
             <body>
@@ -217,16 +208,16 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         <div class="header">SARAMI EVENTS</div>
                         <div class="content">
                             <div>
-                                <div style="font-family: 'Playfair Display'; font-size: 22px; color: ${meta.color};">${meta.venue}</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 20px; color: ${meta.color};">${meta.venue}</div>
                                 <div style="font-family: 'Montserrat'; font-size: 9px; color: #999;">${meta.history}</div>
                             </div>
                             <div class="name-shape">
                                 <div class="label">Esteemed Guest</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 28px;">${data.payerName}</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 26px;">${data.payerName}</div>
                             </div>
                             <div style="display: flex; gap: 40px;">
-                                <div><div class="label">Date & Time</div><div class="val">${meta.date} | ${meta.time}</div></div>
-                                <div><div class="label">Package Type</div><div class="val">${meta.packageName}</div></div>
+                                <div><div class="label">Date & Time</div><div style="font-family: 'Playfair Display'; font-size: 16px;">${meta.date} | ${meta.time}</div></div>
+                                <div><div class="label">Package</div><div style="font-family: 'Playfair Display'; font-size: 16px;">${meta.packageName}</div></div>
                             </div>
                             <div class="qr-area">
                                 <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="140">
@@ -235,27 +226,21 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         </div>
                     </div>
                 </div>
-
                 <div class="page">
                     <div class="bg-hearts"></div>
                     <div class="border-frame">
                         <div class="header">THE PROGRAM</div>
                         <div class="content" style="padding-top: 35px;">
-                            <div style="margin-bottom: 25px; border-left: 2px solid #eee; padding-left: 20px;">
-                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat; font-size: 12px;">18:30</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 20px;">Welcoming Cocktails & Red Carpet</div>
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">18:30</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Welcoming Cocktails</div>
                             </div>
-                            <div style="margin-bottom: 25px; border-left: 2px solid #eee; padding-left: 20px;">
-                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat; font-size: 12px;">20:00</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 20px;">Grand Valentine's Banquet</div>
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">20:00</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Grand Valentine's Banquet</div>
                             </div>
-                            <div style="margin-bottom: 25px; border-left: 2px solid #eee; padding-left: 20px;">
-                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat; font-size: 12px;">22:00</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 20px;">Live Jazz & Romantic Serenade</div>
-                            </div>
-                            <div style="margin-top: 40px; text-align: center; border: 1px dashed #D4AF37; padding: 25px; border-radius: 20px; background: #fffcf9;">
+                            <div style="margin-top: 40px; text-align: center; border: 1px dashed #D4AF37; padding: 20px; border-radius: 20px; background: #fffcf9;">
                                 <p style="font-family: 'Playfair Display'; font-size: 18px; color: ${meta.color}; margin: 0;">"Happy Valentine's to you and yours."</p>
-                                <p style="font-family: Montserrat; font-size: 9px; color: #999; margin-top: 10px;">Please present your QR code for entry.</p>
                             </div>
                         </div>
                     </div>
@@ -266,11 +251,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
 
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { 
-        res.status(500).send("PDF Generation Error: " + e.message); 
-    } finally { 
-        if (browser) await browser.close(); 
-    }
+    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V8.8 Production Live on Port ${PORT}`));
+app.listen(PORT, () => console.log(`Sarami V8.9 Production Live`));
