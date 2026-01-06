@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V8.9
-// PRODUCTION MASTER: ASTRA 401 FIX + LUXURY DESIGN
+// SARAMI EVENTS TICKETING BACKEND - V9.0
+// PRODUCTION MASTER: ASTRA CLIENT AUTH FIXED
 // ==========================================
 
 const express = require('express');
@@ -38,7 +38,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. LUXURY EVENT DATA ---
+// --- 2. LUXURY EVENT DATA & METADATA ---
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
         'NAIVASHA': {
@@ -101,7 +101,9 @@ async function sendTicketEmail(orderData, orderId) {
                     </td></tr>
                 </table>`
         });
-    } catch (err) { console.error("Email Error:", err.message); }
+    } catch (err) { 
+        console.error("Email Sending Error:", err.message); 
+    }
 }
 
 // --- 4. MAIN BOOKING ROUTE ---
@@ -132,24 +134,24 @@ app.post('/api/create-order', async (req, res) => {
             const token = authRes.data.access_token;
             console.log(`[AUTH_SUCCESS] - Secure token received.`);
 
-            // STEP 2: TRIGGER STK PUSH (Astra Endpoint Fix)
+            // STEP 2: TRIGGER STK PUSH WITH CLIENT HEADERS (To fix 401 error)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
             console.log(`[STK_INITIATING] - Attempting push to: ${stkUrl}`);
 
             const stkRes = await axios.post(stkUrl, {
                 amount: amount,
                 phoneNumber: payerPhone,
-                // Using Merchant ID from Env to build the code
                 merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`,
                 reference: orderRef.id,
-                description: `Ticket: ${eventName}`,
+                description: `Sarami Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
             }, { 
                 headers: { 
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
-                    // Added X-Header to resolve 401 Unauthorized
-                    'X-Merchant-Id': process.env.INFINITIPAY_MERCHANT_ID 
+                    // ASTRA CLIENT SECURITY HEADERS
+                    'client_id': process.env.INFINITIPAY_CLIENT_ID,
+                    'client_secret': process.env.INFINITIPAY_CLIENT_SECRET
                 } 
             });
 
@@ -168,7 +170,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PDF GENERATOR (LUXURY DESIGN) ---
+// --- 5. LUXURY PDF TICKET GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -177,9 +179,11 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
-        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
+        browser = await puppeteer.launch({ 
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] 
+        });
         const page = await browser.newPage();
-        const qrContent = encodeURIComponent(`GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
+        const qrContent = encodeURIComponent(`VALID_GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
 
         await page.setContent(`
             <html>
@@ -251,7 +255,11 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
 
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
+    } catch (e) { 
+        res.status(500).send("PDF Generation Error: " + e.message); 
+    } finally { 
+        if (browser) await browser.close(); 
+    }
 });
 
-app.listen(PORT, () => console.log(`Sarami V8.9 Production Live`));
+app.listen(PORT, () => console.log(`Sarami V9.0 Final Master Live`));
