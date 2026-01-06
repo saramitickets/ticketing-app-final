@@ -115,7 +115,7 @@ app.post('/api/create-order', async (req, res) => {
             // Step 2: Login to Bank Gateway
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 merchantId: "139", // YOUR MERCHANT ID
-                password: process.env.DTB_PASSWORD 
+                password: "Rod@6321"
             }, { timeout: 15000 });
 
             const token = authRes.data.access_token;
