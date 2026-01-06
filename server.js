@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V9.0
-// PRODUCTION MASTER: ASTRA CLIENT AUTH FIXED
+// SARAMI EVENTS TICKETING BACKEND - V9.2
+// PRODUCTION MASTER: MERCHANT CODE PREFIX REMOVED
 // ==========================================
 
 const express = require('express');
@@ -24,8 +24,6 @@ try {
 }
 
 const db = admin.firestore();
-
-// Brevo (Sendinblue) Setup
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -38,7 +36,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. LUXURY EVENT DATA & METADATA ---
+// --- 2. LUXURY EVENT DATA ---
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
         'NAIVASHA': {
@@ -123,9 +121,7 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // STEP 1: LOGIN (Successful in V8.8 logs)
-            console.log(`[GATEWAY_ATTEMPT] - Logging in as: rotsieno`);
-            
+            // STEP 1: LOGIN (Confirmed working as rotsieno)
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 username: process.env.INFINITIPAY_MERCHANT_USERNAME,
                 password: process.env.INFINITIPAY_MERCHANT_PASSWORD
@@ -134,14 +130,15 @@ app.post('/api/create-order', async (req, res) => {
             const token = authRes.data.access_token;
             console.log(`[AUTH_SUCCESS] - Secure token received.`);
 
-            // STEP 2: TRIGGER STK PUSH WITH CLIENT HEADERS (To fix 401 error)
+            // STEP 2: TRIGGER STK PUSH (Astra Endpoint - Prefix Removed)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
             console.log(`[STK_INITIATING] - Attempting push to: ${stkUrl}`);
 
             const stkRes = await axios.post(stkUrl, {
                 amount: amount,
                 phoneNumber: payerPhone,
-                merchantCode: `ILM0000${process.env.INFINITIPAY_MERCHANT_ID}`,
+                // Prefix removed: Sending "139" exactly as a string
+                merchantCode: String(process.env.INFINITIPAY_MERCHANT_ID),
                 reference: orderRef.id,
                 description: `Sarami Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
@@ -149,7 +146,6 @@ app.post('/api/create-order', async (req, res) => {
                 headers: { 
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
-                    // ASTRA CLIENT SECURITY HEADERS
                     'client_id': process.env.INFINITIPAY_CLIENT_ID,
                     'client_secret': process.env.INFINITIPAY_CLIENT_SECRET
                 } 
@@ -170,7 +166,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. LUXURY PDF TICKET GENERATOR ---
+// --- 5. LUXURY PDF TICKET GENERATOR (V6.4 DESIGN) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -183,7 +179,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] 
         });
         const page = await browser.newPage();
-        const qrContent = encodeURIComponent(`VALID_GUEST: ${data.payerName} | REF: ${req.params.orderId}`);
+        const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
 
         await page.setContent(`
             <html>
@@ -225,7 +221,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                             </div>
                             <div class="qr-area">
                                 <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="140">
-                                <div class="label" style="color: #D4AF37; font-weight: bold; margin-top: 5px;">SCAN TO ADMIT</div>
+                                <div style="color: #D4AF37; font-weight: bold; font-family: Montserrat; font-size: 8px; margin-top:5px;">SCAN TO ADMIT</div>
                             </div>
                         </div>
                     </div>
@@ -262,4 +258,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Sarami V9.0 Final Master Live`));
+app.listen(PORT, () => console.log(`Sarami V9.2 Production Master Live`));
