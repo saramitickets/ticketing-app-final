@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V9.8
-// FINAL PRODUCTION MASTER: ASTRA PORT 9090 FIX
+// SARAMI EVENTS TICKETING BACKEND - V9.9
+// PRODUCTION MASTER: FINAL HEADER REFINEMENT
 // ==========================================
 
 const express = require('express');
@@ -67,7 +67,7 @@ app.post('/api/create-order', async (req, res) => {
             await orderRef.update({ status: 'PAID' });
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // STEP 1: LOGIN (Successful in logs)
+            // STEP 1: LOGIN (Successful)
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 username: process.env.INFINITIPAY_MERCHANT_USERNAME,
                 password: process.env.INFINITIPAY_MERCHANT_PASSWORD
@@ -77,8 +77,6 @@ app.post('/api/create-order', async (req, res) => {
 
             // STEP 2: STK PUSH (Astra Port 9090)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
-            
-            // Basic Auth Fallback (Astra sometimes requires this base64 string)
             const basicAuth = Buffer.from(`${process.env.INFINITIPAY_CLIENT_ID}:${process.env.INFINITIPAY_CLIENT_SECRET}`).toString('base64');
 
             try {
@@ -92,8 +90,10 @@ app.post('/api/create-order', async (req, res) => {
                 }, { 
                     headers: { 
                         'Authorization': `Bearer ${token}`,
-                        'X-Authorization': `Basic ${basicAuth}`, // Fallback Header
+                        'X-Authorization': `Basic ${basicAuth}`,
                         'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'User-Agent': 'SaramiTicketing/1.0',
                         'apiKey': process.env.INFINITIPAY_CLIENT_SECRET 
                     } 
                 });
@@ -115,18 +115,21 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// PDF Generator route remains full design...
+// --- 4. PDF GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if(!orderDoc.exists) return res.status(404).send("Not found");
         const data = orderDoc.data();
+        const meta = getEventDetails(data.eventId, data.packageTier);
+
         browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
         const page = await browser.newPage();
-        await page.setContent(`<html><body><h1>SARAMI TICKET</h1><p>${data.payerName}</p></body></html>`);
+        await page.setContent(`<html><body style="padding:40px; border:5px solid #D4AF37; font-family:serif;"><h1>SARAMI EVENTS</h1><h2>${data.payerName}</h2><p>${meta.venue}</p></body></html>`);
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V9.8 Production Live`));
+app.listen(PORT, () => console.log(`Sarami V9.9 Production Live`));
