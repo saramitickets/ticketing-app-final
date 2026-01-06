@@ -116,8 +116,6 @@ app.get('/api/test-bank-connection', async (req, res) => {
         res.status(500).json({ 
             status: "FAILED", 
             error: err.message, 
-            details: "This result proves the Render IP is still being blocked by the bank firewall.",
-            help: "Share this screenshot with Peter Njoki."
         });
     }
 });
