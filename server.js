@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V9.3
-// PRODUCTION MASTER: STRICT ASTRA AUTH FIX
+// SARAMI EVENTS TICKETING BACKEND - V9.4
+// PRODUCTION MASTER: STACK OVERFLOW / ASTRA FIX
 // ==========================================
 
 const express = require('express');
@@ -24,6 +24,8 @@ try {
 }
 
 const db = admin.firestore();
+
+// Brevo (Sendinblue) Setup
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -36,7 +38,17 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. LUXURY EVENT DATA ---
+// --- 2. PHONE FORMATTING HELPER (STRICT ASTRA FORMAT) ---
+// Astra expects: 2547XXXXXXXX (No +, No leading 0)
+function formatPhone(phone) {
+    let p = phone.replace(/\D/g, ''); // Remove all non-digits
+    if (p.startsWith('0')) p = '254' + p.slice(1);
+    if (p.startsWith('254')) return p;
+    if (p.length === 9) return '254' + p; // Handle 7XXXXXXXX
+    return p; 
+}
+
+// --- 3. LUXURY EVENT DATA ---
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
         'NAIVASHA': {
@@ -67,7 +79,7 @@ function getEventDetails(eventId, packageTier = 'BRONZE') {
     };
 }
 
-// --- 3. EMAIL TICKET FUNCTION ---
+// --- 4. EMAIL TICKET FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
@@ -104,7 +116,7 @@ async function sendTicketEmail(orderData, orderId) {
     }
 }
 
-// --- 4. MAIN BOOKING ROUTE ---
+// --- 5. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -121,30 +133,30 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            // STEP 1: LOGIN (Successful as rotsieno)
+            // STEP 1: LOGIN (Verified working in logs)
             const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
                 username: process.env.INFINITIPAY_MERCHANT_USERNAME,
                 password: process.env.INFINITIPAY_MERCHANT_PASSWORD
             });
 
             const token = authRes.data.access_token;
+            console.log(`[AUTH_SUCCESS] - Secure token received.`);
 
-            // STEP 2: TRIGGER STK PUSH (Astra Endpoint - Strict Formatting)
+            // STEP 2: TRIGGER STK PUSH (Astra Endpoint - Suggestion Fixes)
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
-            
+            console.log(`[STK_INITIATING] - Attempting push to: ${stkUrl}`);
+
             const stkRes = await axios.post(stkUrl, {
-                amount: Number(amount), // Ensuring amount is a number
-                phoneNumber: payerPhone,
-                merchantCode: Number(process.env.INFINITIPAY_MERCHANT_ID), // STRICT: Trying as Number to fix 401
+                amount: Number(amount),
+                phoneNumber: formatPhone(payerPhone), // FIX: Strictly formatted phone
+                merchantCode: process.env.INFINITIPAY_MERCHANT_ID, // FIX: Sent as string
                 reference: orderRef.id,
                 description: `Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
             }, { 
                 headers: { 
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    'client_id': process.env.INFINITIPAY_CLIENT_ID,
-                    'client_secret': process.env.INFINITIPAY_CLIENT_SECRET
+                    'Authorization': `Bearer ${token}`, // FIX: Clean headers (No client_id/secret)
+                    'Content-Type': 'application/json'
                 } 
             });
 
@@ -163,7 +175,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. LUXURY PDF TICKET GENERATOR ---
+// --- 6. LUXURY PDF TICKET GENERATOR ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -223,6 +235,25 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         </div>
                     </div>
                 </div>
+                <div class="page">
+                    <div class="bg-hearts"></div>
+                    <div class="border-frame">
+                        <div class="header">THE PROGRAM</div>
+                        <div class="content" style="padding-top: 35px;">
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">18:30</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Welcoming Cocktails</div>
+                            </div>
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">20:00</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Grand Valentine's Banquet</div>
+                            </div>
+                            <div style="margin-top: 40px; text-align: center; border: 1px dashed #D4AF37; padding: 20px; border-radius: 20px; background: #fffcf9;">
+                                <p style="font-family: 'Playfair Display'; font-size: 18px; color: ${meta.color}; margin: 0;">"Happy Valentine's to you and yours."</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </body>
             </html>
         `);
@@ -230,10 +261,10 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
     } catch (e) { 
-        res.status(500).send("PDF Error: " + e.message); 
+        res.status(500).send("PDF Generation Error: " + e.message); 
     } finally { 
         if (browser) await browser.close(); 
     }
 });
 
-app.listen(PORT, () => console.log(`Sarami V9.3 Master Live`));
+app.listen(PORT, () => console.log(`Sarami V9.4 Production Master Live`));
