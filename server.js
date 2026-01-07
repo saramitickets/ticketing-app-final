@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.21
-// FULL PRODUCTION MASTER: MOJA + TICKETING + CALLBACK
+// SARAMI EVENTS TICKETING BACKEND - V10.22
+// MASTER: BRANDED STK PROMPT + FULL SYSTEM
 // ==========================================
 
 const express = require('express');
@@ -14,7 +14,7 @@ const crypto = require('crypto');
 // --- SET TO TRUE TO SKIP M-PESA AND TEST EMAILS/PDFs ---
 const BYPASS_PAYMENT = false; 
 
-// --- 1. FIREBASE & BREVO SETUP ---
+// --- 1. FIREBASE INITIALIZATION ---
 let db;
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -22,8 +22,11 @@ try {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
     db = admin.firestore();
-} catch (error) { console.error("Firebase Error:", error.message); }
+} catch (error) { 
+    console.error("Firebase Initialization Error:", error.message); 
+}
 
+// Brevo (Transactional Email) Setup
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -61,7 +64,7 @@ function getEventDetails(eventId, packageTier = 'BRONZE') {
     return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM" };
 }
 
-// --- 3. EMAIL TICKET FUNCTION ---
+// --- 3. LUXURY EMAIL TICKET FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
@@ -69,23 +72,24 @@ async function sendTicketEmail(orderData, orderId) {
             sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `💌 Your Official Ticket: ${orderData.eventName}`,
-            htmlContent: `<div style="padding:40px; background:#fffdf9; border:2px solid #D4AF37; font-family:serif;">
-                <h1 style="color:${meta.color};">Invitation Confirmed! ❤️</h1>
-                <p>Hi ${orderData.payerName}, your reservation for ${meta.packageName} is ready.</p>
-                <p>Order Reference: ${orderId}</p>
-                <div style="margin-top:20px;">
+            htmlContent: `
+                <div style="padding:40px; background:#fffdf9; border:2px solid #D4AF37; font-family:serif; text-align:center;">
+                    <h1 style="color:${meta.color};">Reservation Confirmed! ❤️</h1>
+                    <p>Dear ${orderData.payerName}, your luxury invitation for ${meta.packageName} is ready.</p>
+                    <p><strong>Venue:</strong> ${meta.venue}</p>
+                    <hr style="border:0; border-top:1px solid #D4AF37; width:50%; margin:20px auto;">
+                    <p style="margin-bottom:30px;">Please download your ticket below to present at the entrance.</p>
                     <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                       style="background:${meta.color}; color:#fff; padding:15px 25px; text-decoration:none; border-radius:5px;">
-                       DOWNLOAD YOUR LUXURY TICKET
+                       style="background:${meta.color}; color:#fff; padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold;">
+                       DOWNLOAD TICKET
                     </a>
-                </div>
-            </div>`
+                </div>`
         });
         console.log(`[EMAIL_SENT] to ${orderData.payerEmail}`);
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
-// --- 4. MAIN BOOKING ROUTE ---
+// --- 4. MAIN BOOKING & PAYMENT ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -105,16 +109,18 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const randomId = crypto.randomBytes(8).toString('hex');
 
+            // V10.22: Peter's EXACT payload with Branding
             const payload = {
                 transactionId: `TXN-${randomId}`,
                 transactionReference: orderRef.id,
                 amount: Number(amount),
-                merchantId: "139", //
+                merchantId: "139", 
                 transactionTypeId: 1, 
                 payerAccount: formatPhone(payerPhone),
                 narration: `Sarami: ${eventName}`,
+                promptDisplayAccount: "Sarami Events", // Peter's branding fix
                 callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-                ptyId: 1 //
+                ptyId: 1 
             };
 
             const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
@@ -133,23 +139,22 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PAYMENT CALLBACK ROUTE (THE BRAINS) ---
+// --- 5. PAYMENT CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
     console.log("[CALLBACK_RECEIVED]", JSON.stringify(req.body));
     
-    // Moja usually sends transactionReference which is our orderRef.id
     const orderId = req.body.transactionReference || req.body.externalReference;
     const status = req.body.statusMessage || req.body.status;
 
     try {
         if (orderId) {
             const orderDoc = await db.collection('orders').doc(orderId).get();
-            if (orderDoc.exists && (status === "COMPLETED" || status === "Request received")) {
+            // Handle multiple bank success messages
+            if (orderDoc.exists && (status === "COMPLETED" || status === "Request received" || status === "SUCCESS")) {
                 const data = orderDoc.data();
                 if (data.status !== 'PAID') {
                     await orderDoc.ref.update({ status: 'PAID', bankFinalData: req.body });
-                    await sendTicketEmail(data, orderId);
-                    console.log(`[ORDER_COMPLETED] Reference: ${orderId}`);
+                    await sendTicketEmail(data, orderId); // Auto-send ticket
                 }
             }
         }
@@ -172,19 +177,19 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
         const page = await browser.newPage();
         
-        // Luxury PDF Content
         await page.setContent(`
             <html>
             <body style="margin:0; padding:40px; font-family:serif; background:#fffcf0; border:10px solid #D4AF37;">
                 <div style="text-align:center; color:${meta.color};">
-                    <h1 style="letter-spacing:10px;">SARAMI EVENTS</h1>
-                    <hr style="border:1px solid #D4AF37; width:60%;">
-                    <h2 style="font-size:30px;">${data.payerName}</h2>
-                    <p style="font-size:20px;">${meta.venue}</p>
-                    <p>${meta.date} | ${meta.time}</p>
+                    <h1 style="letter-spacing:10px; margin-bottom:0;">SARAMI EVENTS</h1>
+                    <p style="text-transform:uppercase; margin-top:5px; font-size:12px;">Official Admission Voucher</p>
+                    <hr style="border:1px solid #D4AF37; width:60%; margin:20px auto;">
+                    <h2 style="font-size:32px; margin:10px 0;">${data.payerName}</h2>
+                    <p style="font-size:18px;">${meta.venue}</p>
+                    <p>${meta.date} | Doors open at ${meta.time}</p>
                     <div style="margin-top:40px; padding:20px; border:2px dashed ${meta.color}; display:inline-block;">
-                        <h3 style="margin:0;">${meta.packageName}</h3>
-                        <p style="font-size:12px;">Valid for one person. Ref: ${req.params.orderId}</p>
+                        <h3 style="margin:0; letter-spacing:2px;">${meta.packageName}</h3>
+                        <p style="font-size:10px; margin-top:10px;">Unique ID: ${req.params.orderId}</p>
                     </div>
                 </div>
             </body>
@@ -196,4 +201,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V10.21 Production Master Live`));
+app.listen(PORT, () => console.log(`Sarami V10.22 Branded Master Live`));
