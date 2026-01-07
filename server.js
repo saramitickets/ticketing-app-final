@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.18
-// MASTER: DB SCOPE FIX + PTYID TYPE SAFETY
+// SARAMI EVENTS TICKETING BACKEND - V10.19
+// MASTER: STK PUSH + GLOBAL SCOPE + PTYID FIX
 // ==========================================
 
 const express = require('express');
@@ -13,14 +13,14 @@ const admin = require('firebase-admin');
 // SET TO FALSE TO TRIGGER REAL M-PESA PROMPTS
 const BYPASS_PAYMENT = false; 
 
-// --- 1. FIREBASE INITIALIZATION (FIXED SCOPE) ---
+// --- 1. FIREBASE INITIALIZATION (GLOBAL SCOPE) ---
 let db;
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-    // Initializing db here ensures it's available globally
+    // Fixed: db is now accessible to the whole script
     db = admin.firestore();
 } catch (error) { 
     console.error("CRITICAL: Firebase Initialization Failed:", error.message); 
@@ -44,10 +44,12 @@ function formatPhone(phone) {
     let p = phone.replace(/\D/g, ''); 
     if (p.startsWith('0')) p = '254' + p.slice(1);
     if (p.startsWith('254')) return p;
-    return '254' + p; 
+    if (p.length === 9) return '254' + p; 
+    return p; 
 }
 
 async function getAuthToken() {
+    // Moja Partner Login
     const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
         username: process.env.INFINITIPAY_MERCHANT_USERNAME,
         password: process.env.INFINITIPAY_MERCHANT_PASSWORD
@@ -55,13 +57,23 @@ async function getAuthToken() {
     return authRes.data.access_token;
 }
 
-// --- 3. MAIN BOOKING ROUTE ---
+function getEventDetails(eventId, packageTier = 'BRONZE') {
+    const eventMap = {
+        'NAIVASHA': { venue: "Elsamere Resort, Naivasha", color: "#4a0404", packages: { 'GOLD': "Gold Luxury", 'SILVER': "Silver Suite", 'BRONZE': "Bronze Walk-in" } },
+        'ELDORET': { venue: "Marura Gardens, Eldoret", color: "#5c0505", packages: { 'GOLD': "Gold Package", 'BRONZE': "Bronze Package" } },
+        'NAIROBI': { venue: "Sagret Gardens, Nairobi", color: "#800000", packages: { 'STANDARD': "Premium Couple" } }
+    };
+    const event = eventMap[eventId] || eventMap['NAIROBI'];
+    return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM" };
+}
+
+// --- 3. MAIN BOOKING & PAYMENT ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
     
     try {
-        // Now 'db' is correctly defined for this scope
+        // Create initial record in Firestore
         orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
@@ -75,12 +87,13 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
 
-            // V10.18: Testing ptyId as a raw Number to clear "Invalid params"
+            // V10.19: Peter's ptyId fix
+            // Passed as a String to ensure widest compatibility with the validator
             const payload = {
                 amount: Number(amount),
                 phoneNumber: formatPhone(payerPhone),
-                merchantCode: process.env.INFINITIPAY_MERCHANT_ID, 
-                ptyId: Number(process.env.INFINITIPAY_PTY_ID) || 1, // Force to number
+                merchantCode: String(process.env.INFINITIPAY_MERCHANT_ID), // "139"
+                ptyId: String(process.env.INFINITIPAY_PTY_ID),            // "1"
                 reference: orderRef.id,
                 description: `Sarami: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
@@ -91,21 +104,63 @@ app.post('/api/create-order', async (req, res) => {
                 timeout: 30000 
             });
 
+            // LOG THE RAW SUCCESSFUL RESPONSE
+            console.log(`[BANK_RAW]`, JSON.stringify(stkRes.data));
+
             const bankId = stkRes.data.requestId || stkRes.data.conversationId || "MISSING";
-            await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: bankId });
+            
+            await orderRef.update({ 
+                status: bankId === "MISSING" ? 'BANK_REJECTED' : 'STK_PUSH_SENT', 
+                bankRequestId: bankId 
+            });
             
             console.log(`[STK_SENT] Order: ${orderRef.id} | BankID: ${bankId}`);
-            return res.status(200).json({ success: true, orderId: orderRef.id });
+            return res.status(200).json({ success: true, message: "M-Pesa prompt sent!", orderId: orderRef.id });
         }
     } catch (err) {
-        const errorDetail = err.response?.data?.message || err.message;
-        console.error(`[BOOKING_ERROR] - ${errorDetail}`);
-        if (orderRef) await orderRef.update({ status: 'FAILED', errorMessage: errorDetail });
-        res.status(500).json({ success: false, debug: errorDetail });
+        // CAPTURE RAW REJECTION FROM BANK
+        const bankError = err.response?.data || err.message;
+        console.error(`[BANK_REJECTION_DETAILS]`, JSON.stringify(bankError));
+        
+        if (orderRef) await orderRef.update({ status: 'FAILED', errorMessage: JSON.stringify(bankError) });
+        res.status(500).json({ success: false, debug: bankError });
     }
 });
 
-// PDF Generator and Status Query logic remain included...
-// (I have confirmed the full source is restored in your editor)
+// --- 4. STATUS QUERY ROUTE ---
+app.get('/api/query-status/:orderId', async (req, res) => {
+    try {
+        const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) return res.status(404).json({ error: "Order not found" });
+        const data = orderDoc.data();
+        
+        if (!data.bankRequestId || data.bankRequestId === "MISSING") {
+            return res.json({ status: data.status, message: "No valid bank ID found yet." });
+        }
 
-app.listen(PORT, () => console.log(`Sarami V10.18 Stable Master Live`));
+        const token = await getAuthToken();
+        const queryRes = await axios.get(`https://moja.dtbafrica.com/api/infinitiPay/v2/payments/status/${data.bankRequestId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        await orderDoc.ref.update({ status: queryRes.data.status });
+        return res.json({ orderId: req.params.orderId, bankStatus: queryRes.data.status, raw: queryRes.data });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 5. PDF TICKET GENERATOR ---
+app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
+    let browser;
+    try {
+        const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        const data = orderDoc.data();
+        const meta = getEventDetails(data.eventId, data.packageTier);
+        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
+        const page = await browser.newPage();
+        await page.setContent(`<html><body style="padding:40px; border:5px solid #D4AF37; font-family:serif;"><h1>SARAMI EVENTS</h1><h2>${data.payerName}</h2><p>${meta.venue}</p></body></html>`);
+        const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
+        res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
+    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
+});
+
+app.listen(PORT, () => console.log(`Sarami V10.19 Production Master Live`));
