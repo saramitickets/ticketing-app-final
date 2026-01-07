@@ -1,55 +1,10 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.12
-// MASTER: FULL MERCHANT STRING (ILMXXXX)
+// SARAMI EVENTS TICKETING BACKEND - V10.13
+// MASTER: PTYID FIXED TO 1 (PETER'S UPDATE)
 // ==========================================
 
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const puppeteer = require('puppeteer');
-require('dotenv').config();
-const admin = require('firebase-admin');
+// ... (Firebase, Brevo, and Helpers remain the same)
 
-const BYPASS_PAYMENT = false; 
-
-// --- 1. FIREBASE & BREVO SETUP ---
-try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    if (!admin.apps.length) {
-        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    }
-} catch (error) { console.error("Firebase Error:", error.message); }
-
-const db = admin.firestore();
-const SibApiV3Sdk = require('sib-api-v3-sdk');
-const defaultClient = SibApiV3Sdk.ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const PORT = process.env.PORT || 10000;
-
-// --- 2. HELPERS ---
-function formatPhone(phone) {
-    let p = phone.replace(/\D/g, ''); 
-    if (p.startsWith('0')) p = '254' + p.slice(1);
-    if (p.startsWith('254')) return p;
-    return '254' + p; 
-}
-
-async function getAuthToken() {
-    const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
-        username: process.env.INFINITIPAY_MERCHANT_USERNAME,
-        password: process.env.INFINITIPAY_MERCHANT_PASSWORD
-    });
-    return authRes.data.access_token;
-}
-
-// --- 3. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -68,15 +23,12 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
 
-            // V10.12 FIX: Using the FULL merchant string format (e.g., ILM0000139)
-            // Peter previously asked to "maintain the original payload"
-            const fullMerchantCode = "ILM0000139"; 
-
+            // V10.13 FIX: Applying Peter's instruction for ptyId
             const payload = {
                 amount: Number(amount),
                 phoneNumber: formatPhone(payerPhone),
-                merchantCode: fullMerchantCode, 
-                ptyId: fullMerchantCode,        // Sending the full string to clear "Invalid ptyId"
+                merchantCode: process.env.INFINITIPAY_MERCHANT_ID, // Still "139"
+                ptyId: 1,  // CHANGED TO 1 AS PER PETER'S INSTRUCTION
                 reference: orderRef.id,
                 description: `Sarami Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
@@ -99,14 +51,8 @@ app.post('/api/create-order', async (req, res) => {
             return res.status(200).json({ success: true, message: "M-Pesa prompt sent!", orderId: orderRef.id });
         }
     } catch (err) {
-        const errorDetail = err.response?.data?.message || err.message;
-        console.error(`[BOOKING_ERROR] - ${errorDetail}`);
-        console.error(`[BOOKING_DEBUG] -`, JSON.stringify(err.response?.data || {}));
-        if (orderRef) await orderRef.update({ status: 'FAILED', errorMessage: errorDetail });
-        res.status(500).json({ success: false, debug: errorDetail });
+        // ... (Error handling remains the same)
     }
 });
 
-// Status Query and PDF Ticket logic remain unchanged...
-
-app.listen(PORT, () => console.log(`Sarami V10.12 Master Live`));
+// ... (Rest of the status query and PDF logic remains the same)
