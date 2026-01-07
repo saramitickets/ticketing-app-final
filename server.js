@@ -12,7 +12,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 
 // --- TOGGLE BYPASS FOR TESTING EMAILS/PDFs WITHOUT PAYING ---
-const BYPASS_PAYMENT = false; 
+const BYPASS_PAYMENT = true; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
