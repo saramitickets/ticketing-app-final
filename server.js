@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.9
-// MASTER: STRICT DATA TYPE FOR PTYID
+// SARAMI EVENTS TICKETING BACKEND - V10.11
+// MASTER: STRICT PTYID TYPE + MOJA PROD
 // ==========================================
 
 const express = require('express');
@@ -10,6 +10,7 @@ const puppeteer = require('puppeteer');
 require('dotenv').config();
 const admin = require('firebase-admin');
 
+// SET TO FALSE TO TRIGGER REAL M-PESA PROMPTS
 const BYPASS_PAYMENT = false; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
@@ -78,14 +79,14 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
 
-            // V10.9 FIX: Forcing ptyId and merchantCode to be NUMBERS
+            // V10.11 FIX: Forcing ptyId and merchantCode to be NUMBERS
             const mId = Number(process.env.INFINITIPAY_MERCHANT_ID); 
 
             const payload = {
                 amount: Number(amount),
                 phoneNumber: formatPhone(payerPhone),
                 merchantCode: mId, // Sending as Number
-                ptyId: mId,        // Sending as Number
+                ptyId: mId,        // Sending as Number (REQUIRED BY PROD)
                 reference: orderRef.id,
                 description: `Sarami Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
@@ -97,7 +98,7 @@ app.post('/api/create-order', async (req, res) => {
 
             console.log(`[BANK_RAW]`, JSON.stringify(stkRes.data));
 
-            const bankId = stkRes.data.requestId || stkRes.data.conversationId || stkRes.data.transactionId || "MISSING";
+            const bankId = stkRes.data.requestId || stkRes.data.conversationId || "MISSING";
             
             await orderRef.update({ 
                 status: bankId === "MISSING" ? 'BANK_REJECTED' : 'STK_PUSH_SENT', 
@@ -116,7 +117,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// PDF Generator route remains full design...
+// PDF Generator route stays full design...
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -130,4 +131,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V10.9 Master Live`));
+app.listen(PORT, () => console.log(`Sarami V10.11 Master Live`));
