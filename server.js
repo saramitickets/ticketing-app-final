@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.7
-// MASTER: STK PUSH + FIXED SYNTAX + ID TRACE
+// SARAMI EVENTS TICKETING BACKEND - V10.8
+// MASTER: PTYID FIX + PRODUCTION STABILITY
 // ==========================================
 
 const express = require('express');
@@ -78,26 +78,31 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const stkUrl = process.env.INFINITIPAY_STKPUSH_URL;
 
-            const stkRes = await axios.post(stkUrl, {
+            // FIX: Added 'ptyId' as required by the bank response
+            const payload = {
                 amount: Number(amount),
                 phoneNumber: formatPhone(payerPhone),
-                merchantCode: process.env.INFINITIPAY_MERCHANT_ID, // Pointing to "139" in env
+                merchantCode: process.env.INFINITIPAY_MERCHANT_ID, // "139"
+                ptyId: process.env.INFINITIPAY_MERCHANT_ID,        // "139" (Crucial Fix)
                 reference: orderRef.id,
                 description: `Sarami Ticket: ${eventName}`,
                 callbackUrl: "https://ticketing-app-final.onrender.com/api/payment-callback"
-            }, { 
+            };
+
+            const stkRes = await axios.post(stkUrl, payload, { 
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } 
             });
 
-            // LOG RAW RESPONSE TO CATCH THE BANK ID
             console.log(`[BANK_RAW]`, JSON.stringify(stkRes.data));
 
-            // Try all possible ID fields to avoid the "PENDING" issue
             const bankId = stkRes.data.requestId || stkRes.data.conversationId || stkRes.data.transactionId || "MISSING";
             
-            await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: bankId });
-            console.log(`[STK_SENT] Order: ${orderRef.id} | BankID: ${bankId}`);
+            await orderRef.update({ 
+                status: bankId === "MISSING" ? 'BANK_REJECTED' : 'STK_PUSH_SENT', 
+                bankRequestId: bankId 
+            });
             
+            console.log(`[STK_SENT] Order: ${orderRef.id} | BankID: ${bankId}`);
             return res.status(200).json({ success: true, message: "M-Pesa prompt sent!", orderId: orderRef.id });
         }
     } catch (err) {
@@ -115,7 +120,7 @@ app.get('/api/query-status/:orderId', async (req, res) => {
         if (!orderDoc.exists) return res.status(404).json({ error: "Order not found" });
         const data = orderDoc.data();
         
-        if (!data.bankRequestId || data.bankRequestId === "PENDING" || data.bankRequestId === "MISSING") {
+        if (!data.bankRequestId || data.bankRequestId === "MISSING") {
             return res.json({ status: data.status, message: "No valid bank ID found yet." });
         }
 
@@ -144,4 +149,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V10.7 Master Live`));
+app.listen(PORT, () => console.log(`Sarami V10.8 Master Live`));
