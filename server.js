@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.23
-// MASTER: FULL CALLBACK HANDLING + BRANDING
+// SARAMI EVENTS TICKETING BACKEND - V10.24
+// MASTER: LUXURY V10.1 TICKET + BRANDED MOJA
 // ==========================================
 
 const express = require('express');
@@ -11,7 +11,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-// --- TOGGLE BYPASS FOR TESTING EMAILS/PDFs WITHOUT PAYING ---
+// --- TOGGLE BYPASS FOR TESTING LUXURY EMAILS/PDFs ---
 const BYPASS_PAYMENT = true; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
@@ -21,10 +21,8 @@ try {
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-    db = admin.firestore(); // Global database scope
-} catch (error) { 
-    console.error("Firebase Error:", error.message); 
-}
+    db = admin.firestore();
+} catch (error) { console.error("Firebase Error:", error.message); }
 
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
@@ -34,11 +32,11 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 app.use(cors());
-app.use(express.json()); // Middleware for bank JSON body
+app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. HELPERS & EVENT DATA ---
+// --- 2. HELPERS & LUXURY EVENT DATA ---
 function formatPhone(phone) {
     let p = phone.replace(/\D/g, ''); 
     if (p.startsWith('0')) p = '254' + p.slice(1);
@@ -50,20 +48,20 @@ async function getAuthToken() {
         username: process.env.INFINITIPAY_MERCHANT_USERNAME,
         password: process.env.INFINITIPAY_MERCHANT_PASSWORD
     });
-    return authRes.data.access_token; // Token for subsequent calls
+    return authRes.data.access_token;
 }
 
 function getEventDetails(eventId, packageTier = 'BRONZE') {
     const eventMap = {
-        'NAIVASHA': { venue: "Elsamere Resort, Naivasha", color: "#4a0404", packages: { 'GOLD': "Gold Luxury", 'SILVER': "Silver Suite", 'BRONZE': "Bronze Walk-in" } },
-        'ELDORET': { venue: "Marura Gardens, Eldoret", color: "#5c0505", packages: { 'GOLD': "Gold Package", 'BRONZE': "Bronze Package" } },
-        'NAIROBI': { venue: "Sagret Gardens, Nairobi", color: "#800000", packages: { 'STANDARD': "Premium Couple" } }
+        'NAIVASHA': { venue: "Elsamere Resort, Naivasha", color: "#4a0404", history: "Former home of Joy & George Adamson", packages: { 'GOLD': "Gold Luxury", 'SILVER': "Silver Suite", 'BRONZE': "Bronze Walk-in" } },
+        'ELDORET': { venue: "Marura Gardens, Eldoret", color: "#5c0505", history: "A historic and majestic garden experience", packages: { 'GOLD': "Gold Package", 'BRONZE': "Bronze Package" } },
+        'NAIROBI': { venue: "Sagret Gardens, Nairobi", color: "#800000", history: "An ambient oasis of serenity and romance", packages: { 'STANDARD': "Premium Couple" } }
     };
     const event = eventMap[eventId] || eventMap['NAIROBI'];
-    return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM" };
+    return { ...event, packageName: event.packages[packageTier] || "Standard Entry", date: "Feb 14, 2026", time: "6:30 PM - Late" };
 }
 
-// --- 3. LUXURY EMAIL TICKET FUNCTION ---
+// --- 3. LUXURY EMAIL TICKET FUNCTION (V10.1 DESIGN) ---
 async function sendTicketEmail(orderData, orderId) {
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
@@ -72,21 +70,34 @@ async function sendTicketEmail(orderData, orderId) {
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `💌 Your Official Ticket: ${orderData.eventName}`,
             htmlContent: `
-                <div style="padding:40px; background:#fffdf9; border:2px solid #D4AF37; font-family:serif; text-align:center;">
-                    <h1 style="color:${meta.color};">Reservation Confirmed! ❤️</h1>
-                    <p>Dear ${orderData.payerName}, your luxury invitation for ${meta.packageName} is ready.</p>
-                    <hr style="border:0; border-top:1px solid #D4AF37; width:50%; margin:20px auto;">
-                    <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                       style="background:${meta.color}; color:#fff; padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold;">
-                       DOWNLOAD TICKET
-                    </a>
-                </div>`
+                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4; padding: 20px;">
+                    <tr><td align="center">
+                        <table width="600" border="0" cellspacing="0" cellpadding="40" style="background-color: #fffdf9; border: 2px solid #D4AF37; border-radius: 20px; font-family: 'Georgia', serif;">
+                            <tr><td align="center">
+                                <h1 style="color: ${meta.color}; margin-bottom: 20px; font-size: 28px;">Invitation Confirmed! ❤️</h1>
+                                <p style="font-size: 16px; color: #333; line-height: 1.5; margin-bottom: 30px;">
+                                    Hi <strong>${orderData.payerName}</strong>, your reservation for <strong>${meta.packageName}</strong> at ${meta.venue} is ready.
+                                </p>
+                                <div style="margin-bottom: 30px;">
+                                    <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
+                                       style="background-color: ${meta.color}; color: #ffffff; padding: 18px 35px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                                       DOWNLOAD PDF TICKET
+                                    </a>
+                                </div>
+                                <div style="border-top: 1px solid #D4AF37; padding-top: 25px; margin-top: 20px;">
+                                    <p style="font-size: 15px; font-weight: bold; color: ${meta.color}; margin: 0;">Sarami Events</p>
+                                    <p style="font-size: 13px; color: #444; margin: 5px 0;">www.saramievents.co.ke | +254 104 410 892</p>
+                                </div>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                </table>`
         });
         console.log(`[EMAIL_SENT] to ${orderData.payerEmail}`);
     } catch (err) { console.error("Email Error:", err.message); }
 }
 
-// --- 4. MAIN BOOKING & PAYMENT ROUTE ---
+// --- 4. MAIN BOOKING ROUTE (MOJA PRODUCTION) ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     let orderRef;
@@ -114,7 +125,7 @@ app.post('/api/create-order', async (req, res) => {
                 transactionTypeId: 1, 
                 payerAccount: formatPhone(payerPhone),
                 narration: `Sarami: ${eventName}`,
-                promptDisplayAccount: "Sarami Events", // Branding confirmed by Peter
+                promptDisplayAccount: "Sarami Events",
                 callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
                 ptyId: 1 
             };
@@ -123,9 +134,7 @@ app.post('/api/create-order', async (req, res) => {
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
             });
 
-            console.log(`[BANK_RAW]`, JSON.stringify(stkRes.data));
             const bankId = stkRes.data.results?.paymentId || "SUCCESS";
-            
             await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: bankId });
             return res.status(200).json({ success: true, orderId: orderRef.id });
         }
@@ -135,68 +144,108 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. ENHANCED CALLBACK ROUTE (FIXED FOR CANCELLATIONS) ---
+// --- 5. ENHANCED CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
     console.log("[CALLBACK_RECEIVED]", JSON.stringify(req.body));
-    
-    // Moja usually provides reference as transactionReference
     const orderId = req.body.transactionReference || req.body.externalReference;
     const status = req.body.statusMessage || req.body.status;
-    const resultCode = req.body.resultCode; // 1032 for user cancel
+    const resultCode = req.body.resultCode;
 
     try {
         if (orderId) {
             const orderDoc = await db.collection('orders').doc(orderId).get();
             if (orderDoc.exists) {
                 const data = orderDoc.data();
-
-                // Check for Successful PIN entry
                 if (status === "COMPLETED" || status === "SUCCESS" || resultCode === 0) {
                     if (data.status !== 'PAID') {
                         await orderDoc.ref.update({ status: 'PAID', bankFinalData: req.body });
                         await sendTicketEmail(data, orderId);
                     }
-                } 
-                // Handle Cancellation or Failure
-                else {
+                } else {
                     const failStatus = (resultCode === 1032 || status === "CANCELLED") ? 'CANCELLED' : 'FAILED';
-                    await orderDoc.ref.update({ 
-                        status: failStatus, 
-                        errorMessage: status || "Transaction declined/cancelled." 
-                    });
+                    await orderDoc.ref.update({ status: failStatus, errorMessage: status || "Declined." });
                 }
             }
         }
-        res.status(200).send("OK"); // Acknowledge bank receipt
-    } catch (err) {
-        console.error("Callback Error:", err.message);
-        res.status(500).send("Error");
-    }
+        res.status(200).send("OK");
+    } catch (err) { res.status(500).send("Error"); }
 });
 
-// --- 6. PDF TICKET GENERATOR ---
+// --- 6. LUXURY PDF TICKET GENERATOR (V10.1 DESIGN) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
-        if(!orderDoc.exists) return res.status(404).send("Ticket not found");
+        if(!orderDoc.exists) return res.status(404).send("Not found");
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
-        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process'] });
         const page = await browser.newPage();
-        
+        const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
+
         await page.setContent(`
             <html>
-            <body style="margin:0; padding:40px; font-family:serif; background:#fffcf0; border:10px solid #D4AF37;">
-                <div style="text-align:center; color:${meta.color};">
-                    <h1 style="letter-spacing:10px;">SARAMI EVENTS</h1>
-                    <hr style="border:1px solid #D4AF37; width:60%; margin:20px auto;">
-                    <h2 style="font-size:32px;">${data.payerName}</h2>
-                    <p style="font-size:18px;">${meta.venue}</p>
-                    <p>${meta.date} | ${meta.time}</p>
-                    <div style="margin-top:40px; padding:20px; border:2px dashed ${meta.color}; display:inline-block;">
-                        <h3 style="margin:0;">${meta.packageName}</h3>
+            <head>
+                <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+                <style>
+                    body { margin: 0; padding: 0; }
+                    .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; }
+                    .bg-hearts {
+                        position: absolute; inset: 0;
+                        background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M50 80c-10-10-30-20-30-40 0-10 10-15 15-15 5 0 10 5 15 10 5-5 10-10 15-10 5 0 15 5 15 15 0 20-20 30-30 40z' fill='%23${meta.color.replace('#','')}' fill-opacity='0.05'/%3E%3C/svg%3E");
+                        z-index: 1;
+                    }
+                    .border-frame { position: absolute; inset: 10mm; border: 3px solid #D4AF37; border-radius: 25px; background: rgba(255,255,255,0.96); z-index: 2; display: flex; flex-direction: column; overflow: hidden; }
+                    .header { background: ${meta.color}; height: 50px; display: flex; align-items: center; justify-content: center; color: #D4AF37; font-family: 'Playfair Display'; letter-spacing: 5px; font-size: 22px; }
+                    .content { padding: 25px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; position: relative; }
+                    .name-shape { background: #fffcf0; padding: 15px; border-radius: 12px; border-left: 6px solid ${meta.color}; margin: 10px 0; }
+                    .qr-area { position: absolute; bottom: 25px; right: 25px; text-align: center; }
+                    .label { font-family: 'Montserrat'; font-size: 8px; color: #aaa; text-transform: uppercase; }
+                </style>
+            </head>
+            <body>
+                <div class="page">
+                    <div class="bg-hearts"></div>
+                    <div class="border-frame">
+                        <div class="header">SARAMI EVENTS</div>
+                        <div class="content">
+                            <div>
+                                <div style="font-family: 'Playfair Display'; font-size: 20px; color: ${meta.color};">${meta.venue}</div>
+                                <div style="font-family: 'Montserrat'; font-size: 9px; color: #999;">${meta.history}</div>
+                            </div>
+                            <div class="name-shape">
+                                <div class="label">Esteemed Guest</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 26px;">${data.payerName}</div>
+                            </div>
+                            <div style="display: flex; gap: 40px;">
+                                <div><div class="label">Date & Time</div><div style="font-family: 'Playfair Display'; font-size: 16px;">${meta.date} | ${meta.time}</div></div>
+                                <div><div class="label">Package</div><div style="font-family: 'Playfair Display'; font-size: 16px;">${meta.packageName}</div></div>
+                            </div>
+                            <div class="qr-area">
+                                <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="120">
+                                <div style="color: #D4AF37; font-weight: bold; font-family: Montserrat; font-size: 8px; margin-top:5px;">SCAN TO ADMIT</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="page">
+                    <div class="bg-hearts"></div>
+                    <div class="border-frame">
+                        <div class="header">THE PROGRAM</div>
+                        <div class="content" style="padding-top: 35px;">
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">18:30</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Welcoming Cocktails</div>
+                            </div>
+                            <div style="margin-bottom: 20px; border-left: 2px solid #eee; padding-left: 15px;">
+                                <div style="font-weight: bold; color: #D4AF37; font-family: Montserrat;">20:00</div>
+                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Grand Valentine's Banquet</div>
+                            </div>
+                            <div style="margin-top: 40px; text-align: center; border: 1px dashed #D4AF37; padding: 20px; border-radius: 20px; background: #fffcf9;">
+                                <p style="font-family: 'Playfair Display'; font-size: 18px; color: ${meta.color}; margin: 0;">"Happy Valentine's to you and yours."</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </body>
@@ -208,4 +257,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V10.23 Production Live`));
+app.listen(PORT, () => console.log(`Sarami V10.24 Luxury Production Master Live`));
