@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V10.22
-// MASTER: BRANDED STK PROMPT + FULL SYSTEM
+// SARAMI EVENTS TICKETING BACKEND - V10.23
+// MASTER: FULL CALLBACK HANDLING + BRANDING
 // ==========================================
 
 const express = require('express');
@@ -11,22 +11,21 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-// --- SET TO TRUE TO SKIP M-PESA AND TEST EMAILS/PDFs ---
+// --- TOGGLE BYPASS FOR TESTING EMAILS/PDFs WITHOUT PAYING ---
 const BYPASS_PAYMENT = false; 
 
-// --- 1. FIREBASE INITIALIZATION ---
+// --- 1. FIREBASE & BREVO SETUP ---
 let db;
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-    db = admin.firestore();
+    db = admin.firestore(); // Global database scope
 } catch (error) { 
-    console.error("Firebase Initialization Error:", error.message); 
+    console.error("Firebase Error:", error.message); 
 }
 
-// Brevo (Transactional Email) Setup
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -35,7 +34,7 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // Middleware for bank JSON body
 
 const PORT = process.env.PORT || 10000;
 
@@ -51,7 +50,7 @@ async function getAuthToken() {
         username: process.env.INFINITIPAY_MERCHANT_USERNAME,
         password: process.env.INFINITIPAY_MERCHANT_PASSWORD
     });
-    return authRes.data.access_token;
+    return authRes.data.access_token; // Token for subsequent calls
 }
 
 function getEventDetails(eventId, packageTier = 'BRONZE') {
@@ -76,9 +75,7 @@ async function sendTicketEmail(orderData, orderId) {
                 <div style="padding:40px; background:#fffdf9; border:2px solid #D4AF37; font-family:serif; text-align:center;">
                     <h1 style="color:${meta.color};">Reservation Confirmed! ❤️</h1>
                     <p>Dear ${orderData.payerName}, your luxury invitation for ${meta.packageName} is ready.</p>
-                    <p><strong>Venue:</strong> ${meta.venue}</p>
                     <hr style="border:0; border-top:1px solid #D4AF37; width:50%; margin:20px auto;">
-                    <p style="margin-bottom:30px;">Please download your ticket below to present at the entrance.</p>
                     <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
                        style="background:${meta.color}; color:#fff; padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold;">
                        DOWNLOAD TICKET
@@ -109,7 +106,6 @@ app.post('/api/create-order', async (req, res) => {
             const token = await getAuthToken();
             const randomId = crypto.randomBytes(8).toString('hex');
 
-            // V10.22: Peter's EXACT payload with Branding
             const payload = {
                 transactionId: `TXN-${randomId}`,
                 transactionReference: orderRef.id,
@@ -118,7 +114,7 @@ app.post('/api/create-order', async (req, res) => {
                 transactionTypeId: 1, 
                 payerAccount: formatPhone(payerPhone),
                 narration: `Sarami: ${eventName}`,
-                promptDisplayAccount: "Sarami Events", // Peter's branding fix
+                promptDisplayAccount: "Sarami Events", // Branding confirmed by Peter
                 callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
                 ptyId: 1 
             };
@@ -131,7 +127,7 @@ app.post('/api/create-order', async (req, res) => {
             const bankId = stkRes.data.results?.paymentId || "SUCCESS";
             
             await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: bankId });
-            return res.status(200).json({ success: true, message: "M-Pesa prompt sent!", orderId: orderRef.id });
+            return res.status(200).json({ success: true, orderId: orderRef.id });
         }
     } catch (err) {
         console.error(`[BOOKING_ERROR] - ${err.message}`);
@@ -139,28 +135,41 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PAYMENT CALLBACK ROUTE ---
+// --- 5. ENHANCED CALLBACK ROUTE (FIXED FOR CANCELLATIONS) ---
 app.post('/api/payment-callback', async (req, res) => {
     console.log("[CALLBACK_RECEIVED]", JSON.stringify(req.body));
     
+    // Moja usually provides reference as transactionReference
     const orderId = req.body.transactionReference || req.body.externalReference;
     const status = req.body.statusMessage || req.body.status;
+    const resultCode = req.body.resultCode; // 1032 for user cancel
 
     try {
         if (orderId) {
             const orderDoc = await db.collection('orders').doc(orderId).get();
-            // Handle multiple bank success messages
-            if (orderDoc.exists && (status === "COMPLETED" || status === "Request received" || status === "SUCCESS")) {
+            if (orderDoc.exists) {
                 const data = orderDoc.data();
-                if (data.status !== 'PAID') {
-                    await orderDoc.ref.update({ status: 'PAID', bankFinalData: req.body });
-                    await sendTicketEmail(data, orderId); // Auto-send ticket
+
+                // Check for Successful PIN entry
+                if (status === "COMPLETED" || status === "SUCCESS" || resultCode === 0) {
+                    if (data.status !== 'PAID') {
+                        await orderDoc.ref.update({ status: 'PAID', bankFinalData: req.body });
+                        await sendTicketEmail(data, orderId);
+                    }
+                } 
+                // Handle Cancellation or Failure
+                else {
+                    const failStatus = (resultCode === 1032 || status === "CANCELLED") ? 'CANCELLED' : 'FAILED';
+                    await orderDoc.ref.update({ 
+                        status: failStatus, 
+                        errorMessage: status || "Transaction declined/cancelled." 
+                    });
                 }
             }
         }
-        res.status(200).send("OK");
+        res.status(200).send("OK"); // Acknowledge bank receipt
     } catch (err) {
-        console.error("Callback Processing Error:", err.message);
+        console.error("Callback Error:", err.message);
         res.status(500).send("Error");
     }
 });
@@ -181,15 +190,13 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
             <html>
             <body style="margin:0; padding:40px; font-family:serif; background:#fffcf0; border:10px solid #D4AF37;">
                 <div style="text-align:center; color:${meta.color};">
-                    <h1 style="letter-spacing:10px; margin-bottom:0;">SARAMI EVENTS</h1>
-                    <p style="text-transform:uppercase; margin-top:5px; font-size:12px;">Official Admission Voucher</p>
+                    <h1 style="letter-spacing:10px;">SARAMI EVENTS</h1>
                     <hr style="border:1px solid #D4AF37; width:60%; margin:20px auto;">
-                    <h2 style="font-size:32px; margin:10px 0;">${data.payerName}</h2>
+                    <h2 style="font-size:32px;">${data.payerName}</h2>
                     <p style="font-size:18px;">${meta.venue}</p>
-                    <p>${meta.date} | Doors open at ${meta.time}</p>
+                    <p>${meta.date} | ${meta.time}</p>
                     <div style="margin-top:40px; padding:20px; border:2px dashed ${meta.color}; display:inline-block;">
-                        <h3 style="margin:0; letter-spacing:2px;">${meta.packageName}</h3>
-                        <p style="font-size:10px; margin-top:10px;">Unique ID: ${req.params.orderId}</p>
+                        <h3 style="margin:0;">${meta.packageName}</h3>
                     </div>
                 </div>
             </body>
@@ -201,4 +208,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`Sarami V10.22 Branded Master Live`));
+app.listen(PORT, () => console.log(`Sarami V10.23 Production Live`));
