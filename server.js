@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.00
-// MASTER: LUXURY ENHANCED + LOGGING + HISTORY
+// SARAMI EVENTS TICKETING BACKEND - V11.1
+// MASTER: EXACT ITINERARY + LARGE QR + LOGS
 // ==========================================
 
 const express = require('express');
@@ -56,8 +56,8 @@ function getEventDetails(eventId, packageTier) {
         'NAIVASHA': {
             venue: "Elsamere Resort, Naivasha",
             history: "Former home of Joy & George Adamson (Born Free)",
-            color: "#6b0f0f", // Brighter deep red
-            accent: "#D4AF37", // Gold
+            color: "#6b0f0f", 
+            accent: "#D4AF37", 
             packages: {
                 'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins… forever." },
                 'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." },
@@ -67,7 +67,7 @@ function getEventDetails(eventId, packageTier) {
         'ELDORET': {
             venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#1a472a", // Emerald Green Luxury
+            color: "#1a472a", 
             accent: "#D4AF37",
             packages: {
                 'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
@@ -77,7 +77,7 @@ function getEventDetails(eventId, packageTier) {
         'NAIROBI': {
             venue: "Sagret Gardens, Nairobi",
             history: "An Enchanted Garden Oasis in the Heart of the City",
-            color: "#4b0082", // Royal Purple
+            color: "#4b0082", 
             accent: "#D4AF37",
             packages: {
                 'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." }
@@ -94,7 +94,7 @@ function getEventDetails(eventId, packageTier) {
 
 // --- 3. LUXURY EMAIL FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
-    console.log(`📩 [EMAIL] Preparing to send ticket for Order: ${orderId}`);
+    console.log(`📩 [LOG] Step 3: Preparing email for Order: ${orderId}`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
         await apiInstance.sendTransacEmail({
@@ -108,21 +108,20 @@ async function sendTicketEmail(orderData, orderId) {
                     <p style="color:#666;">${meta.history}</p>
                     <div style="margin:40px 0;">
                         <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                           style="background:${meta.color}; color:#fff; padding:18px 35px; text-decoration:none; border-radius:50px; font-weight:bold; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                           style="background:${meta.color}; color:#fff; padding:18px 35px; text-decoration:none; border-radius:50px; font-weight:bold;">
                            DOWNLOAD DIGITAL TICKET
                         </a>
                     </div>
-                    <p style="font-style:italic;">"${meta.quote}"</p>
                 </div>`
         });
-        console.log(`✅ [EMAIL] Sent successfully to ${orderData.payerEmail}`);
+        console.log(`✅ [LOG] Step 4: Email sent to ${orderData.payerEmail}`);
     } catch (err) { console.error("❌ [EMAIL ERROR]:", err.message); }
 }
 
 // --- 4. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
-    console.log(`🚀 [ORDER] New booking request received for ${payerName} (${eventId})`);
+    console.log(`🚀 [LOG] Step 1: Initiating booking for ${payerName}`);
     
     let orderRef;
     try {
@@ -131,15 +130,14 @@ app.post('/api/create-order', async (req, res) => {
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-        console.log(`💾 [FIRESTORE] Order created with ID: ${orderRef.id}`);
+        console.log(`💾 [LOG] Step 2: Firestore Doc Created: ${orderRef.id}`);
 
         if (BYPASS_PAYMENT) {
-            console.log(`⏩ [PAYMENT] BYPASS ACTIVE: Marking Order ${orderRef.id} as PAID`);
+            console.log(`⏩ [LOG] Payment Bypass: Marking Order ${orderRef.id} as PAID`);
             await orderRef.update({ status: 'PAID' });
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            console.log(`💳 [PAYMENT] Requesting STK Push for ${payerPhone}`);
             const token = await getAuthToken();
             const randomId = crypto.randomBytes(8).toString('hex');
             const payload = {
@@ -159,7 +157,7 @@ app.post('/api/create-order', async (req, res) => {
             });
             const bankId = stkRes.data.results?.paymentId || "SUCCESS";
             await orderRef.update({ status: 'STK_PUSH_SENT', bankRequestId: bankId });
-            console.log(`📲 [STK] Push Sent Successfully. Payment ID: ${bankId}`);
+            console.log(`📲 [LOG] STK Push Triggered for ${payerPhone}`);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         }
     } catch (err) { 
@@ -172,7 +170,7 @@ app.post('/api/create-order', async (req, res) => {
 app.post('/api/payment-callback', async (req, res) => {
     const orderId = req.body.transactionReference || req.body.externalReference;
     const status = req.body.statusMessage || req.body.status;
-    console.log(`📡 [CALLBACK] Received update for Order ${orderId}: ${status}`);
+    console.log(`📡 [LOG] Callback received for ${orderId}: ${status}`);
 
     try {
         if (orderId) {
@@ -181,23 +179,20 @@ app.post('/api/payment-callback', async (req, res) => {
                 const data = orderDoc.data();
                 if (status === "COMPLETED" || status === "SUCCESS") {
                     if (data.status !== 'PAID') {
-                        console.log(`💰 [PAYMENT] Successful! Updating Order ${orderId} and sending ticket.`);
+                        console.log(`💰 [LOG] Payment Confirmed. Finalizing Order.`);
                         await orderDoc.ref.update({ status: 'PAID', bankFinalData: req.body });
                         await sendTicketEmail(data, orderId);
                     }
-                } else {
-                    console.log(`⚠️ [PAYMENT] Failed or Cancelled for ${orderId}`);
-                    await orderDoc.ref.update({ status: 'FAILED', errorMessage: status });
                 }
             }
         }
         res.status(200).send("OK");
-    } catch (err) { console.error("❌ [CALLBACK ERROR]:", err.message); res.status(500).send("Error"); }
+    } catch (err) { res.status(500).send("Error"); }
 });
 
 // --- 6. TWO-PAGE ENHANCED PDF TICKET ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
-    console.log(`📄 [PDF] Generating ticket for ${req.params.orderId}`);
+    console.log(`📄 [LOG] Step 5: Generating PDF for ${req.params.orderId}`);
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
@@ -226,7 +221,6 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         border: 2px solid ${meta.accent}; 
                         background: white; z-index: 2; 
                         display: flex; flex-direction: column; 
-                        box-shadow: 0 0 40px rgba(0,0,0,0.05);
                     }
                     .header { 
                         background: linear-gradient(90deg, ${meta.color}, #333); 
@@ -236,26 +230,24 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                     .content { padding: 30px; flex: 1; position: relative; }
                     
                     .pricing-shape {
-                        display: inline-block;
-                        background: ${meta.color};
-                        color: white;
-                        padding: 10px 25px;
-                        border-radius: 50px 5px 50px 5px;
-                        font-family: 'Montserrat';
-                        font-weight: 700;
-                        margin-top: 10px;
-                        border: 2px solid ${meta.accent};
+                        display: inline-block; background: ${meta.color}; color: white;
+                        padding: 10px 25px; border-radius: 50px 5px 50px 5px;
+                        font-family: 'Montserrat'; font-weight: 700; margin-top: 10px; border: 2px solid ${meta.accent};
                     }
 
                     .venue-title { font-family: 'Playfair Display'; font-size: 28px; color: ${meta.color}; margin-bottom: 2px; }
                     .venue-history { font-family: 'Montserrat'; font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 15px; }
-                    
-                    .guest-box { margin-top: 20px; border-left: 5px solid ${meta.accent}; padding-left: 20px; }
-                    .label { font-family: 'Montserrat'; font-size: 9px; color: #999; text-transform: uppercase; letter-spacing: 2px; }
                     .guest-name { font-family: 'Playfair Display'; font-size: 32px; color: #222; }
 
-                    .qr-container { position: absolute; bottom: 30px; right: 30px; text-align: center; }
-                    .itinerary-item { margin-bottom: 20px; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; }
+                    /* LARGE QR CODE STYLING */
+                    .qr-container { position: absolute; bottom: 20px; right: 20px; text-align: center; }
+                    .qr-img { width: 145px; height: 145px; border: 1px solid #eee; padding: 5px; }
+
+                    .itinerary-item { margin-bottom: 25px; display: flex; align-items: flex-start; }
+                    .itinerary-time { font-family: 'Montserrat'; font-weight: 900; font-size: 18px; width: 80px; color: #222; }
+                    .itinerary-info { flex: 1; border-left: 2px solid #eee; padding-left: 20px; }
+                    .itinerary-title { font-family: 'Montserrat'; font-weight: 700; font-size: 18px; color: #222; }
+                    .itinerary-desc { font-family: 'Montserrat'; font-size: 12px; color: #666; }
                 </style>
             </head>
             <body>
@@ -266,33 +258,18 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         <div class="content">
                             <div class="venue-title">${meta.venue}</div>
                             <div class="venue-history">${meta.history}</div>
-                            
-                            <div class="guest-box">
-                                <div class="label">Esteemed Guest</div>
+                            <div style="margin-top: 20px;">
+                                <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 2px; color: #999;">Esteemed Guest</div>
                                 <div class="guest-name">${data.payerName}</div>
                             </div>
-
-                            <div style="display: flex; gap: 50px; margin-top: 25px;">
-                                <div>
-                                    <div class="label">Date</div>
-                                    <div style="font-family: 'Montserrat'; font-weight:700;">${meta.date}</div>
-                                </div>
-                                <div>
-                                    <div class="label">Package</div>
-                                    <div style="font-family: 'Montserrat'; font-weight:700;">${meta.name}</div>
-                                </div>
+                            <div style="display: flex; gap: 50px; margin-top: 20px;">
+                                <div><div style="font-size: 9px; color: #999;">DATE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.date}</div></div>
+                                <div><div style="font-size: 9px; color: #999;">PACKAGE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.name}</div></div>
                             </div>
-
-                            <div class="pricing-shape">
-                                KES ${meta.price} <span style="font-weight: 400; font-size: 12px; margin-left: 5px;">| PAID</span>
-                            </div>
-
-                            <p style="font-style:italic; font-family:'Playfair Display'; color:${meta.color}; font-size:16px; margin-top:20px;">
-                                "${meta.quote}"
-                            </p>
-
+                            <div class="pricing-shape">KES ${meta.price} | PAID</div>
+                            <p style="font-style:italic; font-family:'Playfair Display'; color:${meta.color}; font-size:16px; margin-top:20px;">"${meta.quote}"</p>
                             <div class="qr-container">
-                                <img src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode" width="110">
+                                <img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode">
                                 <div style="color: ${meta.accent}; font-weight: bold; font-family: Montserrat; font-size: 8px; margin-top:5px;">OFFICIAL ENTRY QR</div>
                             </div>
                         </div>
@@ -302,30 +279,31 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 <div class="page">
                     <div class="bg-overlay"></div>
                     <div class="border-frame">
-                        <div class="header" style="background: #222;">EVENING ITINERARY</div>
-                        <div class="content">
+                        <div class="header" style="background: #111;">THE EVENING ITINERARY</div>
+                        <div class="content" style="padding-top: 40px;">
                             <div class="itinerary-item">
-                                <div style="font-weight: bold; color: ${meta.accent}; font-family: Montserrat;">18:30</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Welcome & Photo Ops</div>
-                                <div style="font-size:11px; color:#777;">Capture the magic at our luxury photo booths.</div>
-                            </div>
-                            <div class="itinerary-item">
-                                <div style="font-weight: bold; color: ${meta.accent}; font-family: Montserrat;">19:15</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Unveiling the Evening</div>
-                                <div style="font-size:11px; color:#777;">Interactive games designed for two.</div>
-                            </div>
-                            <div class="itinerary-item">
-                                <div style="font-weight: bold; color: ${meta.accent}; font-family: Montserrat;">20:30</div>
-                                <div style="font-family: 'Playfair Display'; font-size: 18px;">Gourmet Dinner & Live Band</div>
-                                <div style="font-size:11px; color:#777;">A culinary journey curated by our top chefs.</div>
-                            </div>
-                            
-                            <div style="margin-top: 40px; text-align: center;">
-                                <div style="display:inline-block; border: 1px solid ${meta.accent}; padding: 15px 40px; border-radius: 50px;">
-                                    <span style="font-family: 'Playfair Display'; font-style: italic; color: ${meta.color};">
-                                        "Love is the only gold."
-                                    </span>
+                                <div class="itinerary-time">18:30</div>
+                                <div class="itinerary-info">
+                                    <div class="itinerary-title">Welcoming Cocktails</div>
+                                    <div class="itinerary-desc">Chilled signature cocktails upon arrival.</div>
                                 </div>
+                            </div>
+                            <div class="itinerary-item">
+                                <div class="itinerary-time">19:00</div>
+                                <div class="itinerary-info" style="border-left: 2px solid ${meta.accent};">
+                                    <div class="itinerary-title" style="color:${meta.accent};">Couples Games & Karaoke</div>
+                                    <div class="itinerary-desc">An hour of laughter, bonding, and melody.</div>
+                                </div>
+                            </div>
+                            <div class="itinerary-item">
+                                <div class="itinerary-time">20:00</div>
+                                <div class="itinerary-info">
+                                    <div class="itinerary-title">3-Course Gourmet Banquet</div>
+                                    <div class="itinerary-desc">Curated culinary excellence for two.</div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 30px; text-align: center; font-family: 'Playfair Display'; font-style: italic; color: ${meta.color}; border-top: 1px solid #f0f0f0; padding-top: 20px;">
+                                "Happy Valentine's to you and yours."
                             </div>
                         </div>
                     </div>
@@ -334,12 +312,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
             </html>
         `);
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
-        console.log(`✅ [PDF] Generation complete for ${data.payerName}`);
+        console.log(`✅ [LOG] Step 6: PDF Sent to Guest.`);
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { 
-        console.error(`❌ [PDF ERROR]: ${e.message}`);
-        res.status(500).send(e.message); 
-    } finally { if (browser) await browser.close(); }
+    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11 ULTIMATE - PORT ${PORT} - READY`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V11.1 - PORT ${PORT} - READY`));
