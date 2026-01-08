@@ -1,5 +1,5 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.5 (UPDATED)
+// SARAMI EVENTS TICKETING BACKEND - V11.5
 // MASTER: FINAL LUXURY DESIGN + EXACT ITINERARY
 // ==========================================
 
@@ -67,7 +67,7 @@ function getEventDetails(eventId, packageTier) {
         'ELDORET': {
             venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#006064", // CHANGED: Brighter Luxury Emerald/Teal instead of dark green
+            color: "#006064", // CHANGED: Brighter Luxury Teal instead of Black
             accent: "#D4AF37",
             packages: {
                 'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
@@ -137,31 +137,33 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
+            const token = await getAuthToken();
+            const randomId = crypto.randomBytes(8).toString('hex');
+            const payload = {
+                transactionId: `TXN-${randomId}`,
+                transactionReference: orderRef.id,
+                amount: Number(amount),
+                merchantId: "139", 
+                transactionTypeId: 1, 
+                payerAccount: formatPhone(payerPhone),
+                narration: `Sarami: ${eventName}`,
+                promptDisplayAccount: "Sarami Events",
+                callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
+                ptyId: 1 
+            };
+
+            // Added a try-catch specifically for the payment request to log cancellations/failures
             try {
-                const token = await getAuthToken();
-                const randomId = crypto.randomBytes(8).toString('hex');
-                const payload = {
-                    transactionId: `TXN-${randomId}`,
-                    transactionReference: orderRef.id,
-                    amount: Number(amount),
-                    merchantId: "139", 
-                    transactionTypeId: 1, 
-                    payerAccount: formatPhone(payerPhone),
-                    narration: `Sarami: ${eventName}`,
-                    promptDisplayAccount: "Sarami Events",
-                    callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-                    ptyId: 1 
-                };
-                await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+                const payRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    timeout: 30000 // 30 second timeout
                 });
-                console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}`);
+                console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Waiting for user action...`);
                 return res.status(200).json({ success: true, orderId: orderRef.id });
             } catch (payErr) {
-                // LOG CANCELLATION/FAILURE HERE
-                console.log(`❌ [LOG] Payment Request FAILED or CANCELLED for ${payerName} (${payerPhone})`);
-                await orderRef.update({ status: 'CANCELLED_OR_FAILED' });
-                return res.status(500).json({ success: false, message: "Payment initialization failed." });
+                console.log(`⚠️ [LOG] CLIENT ACTION: Payment prompt for ${payerName} was Cancelled, Timed Out, or Failed.`);
+                await orderRef.update({ status: 'CANCELLED_BY_USER' });
+                return res.status(400).json({ success: false, message: "Payment cancelled or failed" });
             }
         }
     } catch (err) { 
@@ -170,7 +172,28 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. PDF TICKET GENERATION ---
+// --- 5. CALLBACK ROUTE (Essential for logging actual M-Pesa results) ---
+app.post('/api/payment-callback', async (req, res) => {
+    const callbackData = req.body;
+    const orderId = callbackData.transactionReference;
+    
+    console.log(`🔔 [LOG] Received Payment Callback for Order: ${orderId}`);
+    
+    if (callbackData.status === 'SUCCESS' || callbackData.resultCode === 0) {
+        console.log(`💰 [LOG] PAYMENT VERIFIED for Order: ${orderId}`);
+        const orderDoc = await db.collection('orders').doc(orderId).get();
+        if (orderDoc.exists) {
+            await db.collection('orders').doc(orderId).update({ status: 'PAID' });
+            await sendTicketEmail(orderDoc.data(), orderId);
+        }
+    } else {
+        console.log(`❌ [LOG] PAYMENT FAILED/CANCELLED by user at M-Pesa Prompt for Order: ${orderId}`);
+        await db.collection('orders').doc(orderId).update({ status: 'FAILED' });
+    }
+    res.sendStatus(200);
+});
+
+// --- 6. PDF TICKET GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     console.log(`📄 [LOG] Step 5: Rendering Ticket PDF for Order ${req.params.orderId}`);
     let browser;
