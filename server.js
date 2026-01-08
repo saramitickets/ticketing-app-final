@@ -11,7 +11,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const BYPASS_PAYMENT = true; 
+const BYPASS_PAYMENT = false; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
