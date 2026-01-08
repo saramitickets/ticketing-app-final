@@ -1,5 +1,5 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.5
+// SARAMI EVENTS TICKETING BACKEND - V11.5 (UPDATED)
 // MASTER: FINAL LUXURY DESIGN + EXACT ITINERARY
 // ==========================================
 
@@ -67,7 +67,7 @@ function getEventDetails(eventId, packageTier) {
         'ELDORET': {
             venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#1a472a", 
+            color: "#006064", // CHANGED: Brighter Luxury Emerald/Teal instead of dark green
             accent: "#D4AF37",
             packages: {
                 'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
@@ -137,25 +137,32 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } else {
-            const token = await getAuthToken();
-            const randomId = crypto.randomBytes(8).toString('hex');
-            const payload = {
-                transactionId: `TXN-${randomId}`,
-                transactionReference: orderRef.id,
-                amount: Number(amount),
-                merchantId: "139", 
-                transactionTypeId: 1, 
-                payerAccount: formatPhone(payerPhone),
-                narration: `Sarami: ${eventName}`,
-                promptDisplayAccount: "Sarami Events",
-                callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-                ptyId: 1 
-            };
-            await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-            });
-            console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}`);
-            return res.status(200).json({ success: true, orderId: orderRef.id });
+            try {
+                const token = await getAuthToken();
+                const randomId = crypto.randomBytes(8).toString('hex');
+                const payload = {
+                    transactionId: `TXN-${randomId}`,
+                    transactionReference: orderRef.id,
+                    amount: Number(amount),
+                    merchantId: "139", 
+                    transactionTypeId: 1, 
+                    payerAccount: formatPhone(payerPhone),
+                    narration: `Sarami: ${eventName}`,
+                    promptDisplayAccount: "Sarami Events",
+                    callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
+                    ptyId: 1 
+                };
+                await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+                });
+                console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}`);
+                return res.status(200).json({ success: true, orderId: orderRef.id });
+            } catch (payErr) {
+                // LOG CANCELLATION/FAILURE HERE
+                console.log(`❌ [LOG] Payment Request FAILED or CANCELLED for ${payerName} (${payerPhone})`);
+                await orderRef.update({ status: 'CANCELLED_OR_FAILED' });
+                return res.status(500).json({ success: false, message: "Payment initialization failed." });
+            }
         }
     } catch (err) { 
         console.error(`❌ [ORDER ERROR]: ${err.message}`);
