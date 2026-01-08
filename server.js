@@ -67,7 +67,7 @@ function getEventDetails(eventId, packageTier) {
         'ELDORET': {
             venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#006064", // CHANGED: Brighter Luxury Teal instead of Black
+            color: "#006064", // Retained: Luxury Teal
             accent: "#D4AF37",
             packages: {
                 'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
@@ -152,18 +152,17 @@ app.post('/api/create-order', async (req, res) => {
                 ptyId: 1 
             };
 
-            // Added a try-catch specifically for the payment request to log cancellations/failures
             try {
-                const payRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
+                await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
                     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    timeout: 30000 // 30 second timeout
+                    timeout: 45000 
                 });
                 console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Waiting for user action...`);
                 return res.status(200).json({ success: true, orderId: orderRef.id });
             } catch (payErr) {
-                console.log(`⚠️ [LOG] CLIENT ACTION: Payment prompt for ${payerName} was Cancelled, Timed Out, or Failed.`);
-                await orderRef.update({ status: 'CANCELLED_BY_USER' });
-                return res.status(400).json({ success: false, message: "Payment cancelled or failed" });
+                console.log(`❌ [LOG] CANCELLED: User closed the prompt or request failed for ${payerName}`);
+                await orderRef.update({ status: 'CANCELLED' });
+                return res.status(200).json({ success: true, orderId: orderRef.id, message: "Cancelled" });
             }
         }
     } catch (err) { 
@@ -172,23 +171,33 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. CALLBACK ROUTE (Essential for logging actual M-Pesa results) ---
+// --- 5. UPDATED CALLBACK ROUTE (FIXED ERROR) ---
 app.post('/api/payment-callback', async (req, res) => {
-    const callbackData = req.body;
-    const orderId = callbackData.transactionReference;
-    
-    console.log(`🔔 [LOG] Received Payment Callback for Order: ${orderId}`);
-    
-    if (callbackData.status === 'SUCCESS' || callbackData.resultCode === 0) {
-        console.log(`💰 [LOG] PAYMENT VERIFIED for Order: ${orderId}`);
-        const orderDoc = await db.collection('orders').doc(orderId).get();
-        if (orderDoc.exists) {
-            await db.collection('orders').doc(orderId).update({ status: 'PAID' });
-            await sendTicketEmail(orderDoc.data(), orderId);
+    // Try to find order ID in multiple possible locations to prevent 'undefined'
+    const orderId = req.body.transactionReference || req.body.merchantReference || req.body.orderId;
+    const status = req.body.status || "";
+
+    console.log(`🔔 [LOG] Received Callback for Order: ${orderId}`);
+
+    if (!orderId) {
+        console.log("⚠️ [LOG] Callback received but Order ID is missing. Skipping update.");
+        return res.sendStatus(200);
+    }
+
+    try {
+        if (status.toUpperCase() === 'SUCCESS') {
+            console.log(`💰 [LOG] PAYMENT VERIFIED for Order: ${orderId}`);
+            const orderDoc = await db.collection('orders').doc(orderId).get();
+            if (orderDoc.exists) {
+                await db.collection('orders').doc(orderId).update({ status: 'PAID' });
+                await sendTicketEmail(orderDoc.data(), orderId);
+            }
+        } else {
+            console.log(`❌ [LOG] USER CANCELLED or PAYMENT FAILED at M-Pesa Prompt for: ${orderId}`);
+            await db.collection('orders').doc(orderId).update({ status: 'CANCELLED_AT_PROMPT' });
         }
-    } else {
-        console.log(`❌ [LOG] PAYMENT FAILED/CANCELLED by user at M-Pesa Prompt for Order: ${orderId}`);
-        await db.collection('orders').doc(orderId).update({ status: 'FAILED' });
+    } catch (e) {
+        console.error("❌ [CALLBACK ERROR]:", e.message);
     }
     res.sendStatus(200);
 });
