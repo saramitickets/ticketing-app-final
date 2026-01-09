@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.8
-// FINAL PATCH: RAW BODY PARSING + NESTED FIX
+// SARAMI EVENTS TICKETING BACKEND - V11.8 (DEBUGGED & ENHANCED)
+// FIXED: CALLBACK PARSING, ADDED STATUS CHECK ROUTE, CAPTURE STK RESPONSE FOR MAPPING
 // ==========================================
 
 const express = require('express');
@@ -11,7 +11,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const BYPASS_PAYMENT = false; 
+const BYPASS_PAYMENT = false;
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
@@ -22,7 +22,9 @@ try {
     }
     db = admin.firestore();
     console.log("✅ [SYSTEM] Firebase Initialized Successfully");
-} catch (error) { console.error("❌ Firebase Error:", error.message); }
+} catch (error) {
+    console.error("❌ Firebase Error:", error.message);
+}
 
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
@@ -33,7 +35,7 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 const app = express();
 app.use(cors());
 
-// CRITICAL: Added diverse parsers to solve the "DEBUG FULL PAYLOAD: {}" issue
+// CRITICAL: Diverse parsers to handle various payload types
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.text({ type: '*/*' })); // Catch-all for unusual content types
@@ -42,9 +44,9 @@ const PORT = process.env.PORT || 10000;
 
 // --- 2. HELPERS ---
 function formatPhone(phone) {
-    let p = phone.replace(/\D/g, ''); 
+    let p = phone.replace(/\D/g, '');
     if (p.startsWith('0')) p = '254' + p.slice(1);
-    return p.startsWith('254') ? p : '254' + p; 
+    return p.startsWith('254') ? p : '254' + p;
 }
 
 async function getAuthToken() {
@@ -83,7 +85,9 @@ async function sendTicketEmail(orderData, orderId) {
             </div>`
         });
         console.log(`✅ [LOG] Step 4: Email delivered to ${orderData.payerEmail}`);
-    } catch (err) { console.error("❌ [EMAIL ERROR]:", err.message); }
+    } catch (err) {
+        console.error("❌ [EMAIL ERROR]:", err.message);
+    }
 }
 
 // --- 4. MAIN BOOKING ROUTE ---
@@ -97,45 +101,76 @@ app.post('/api/create-order', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         console.log(`💾 [LOG] Step 2: Firestore Document Created [ID: ${orderRef.id}]`);
+
         const token = await getAuthToken();
         const payload = {
             transactionId: `TXN-${crypto.randomBytes(4).toString('hex')}`,
             transactionReference: orderRef.id,
             amount: Number(amount),
-            merchantId: "139", 
-            transactionTypeId: 1, 
+            merchantId: "139",
+            transactionTypeId: 1,
             payerAccount: formatPhone(payerPhone),
             narration: `Sarami: ${eventName}`,
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-            ptyId: 1 
+            ptyId: 1
         };
-        await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { headers: { 'Authorization': `Bearer ${token}` } });
-        console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}.`);
+
+        const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Response: ${JSON.stringify(stkRes.data)}`);
+
+        // Capture potential mapping IDs from STK response
+        const merchantRequestID = stkRes.data.MerchantRequestID || stkRes.data.merchantRequestId || stkRes.data.transactionId || '';
+        const checkoutRequestID = stkRes.data.CheckoutRequestID || stkRes.data.checkoutRequestId || stkRes.data.transactionReference || '';
+
+        await orderRef.update({ merchantRequestID, checkoutRequestID });
+
         res.status(200).json({ success: true, orderId: orderRef.id });
-    } catch (err) { res.status(500).json({ success: false, debug: err.message }); }
+    } catch (err) {
+        res.status(500).json({ success: false, debug: err.message });
+    }
 });
 
-// --- 5. UPDATED CALLBACK (SOLVES "undefined" & "{}" ISSUES) ---
+// --- 5. UPDATED CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
     let rawData = req.body;
 
-    // Handle cases where body comes as a string
+    // Handle string body
     if (typeof req.body === 'string') {
-        try { rawData = JSON.parse(req.body); } catch (e) { 
-            // If it's not JSON, it might be URL-encoded text
+        try { rawData = JSON.parse(req.body); } catch (e) {
             const params = new URLSearchParams(req.body);
             rawData = Object.fromEntries(params);
         }
     }
 
-    const results = rawData.results || {};
-    const orderId = results.transactionReference || rawData.transactionReference || req.query.transactionReference;
-    const status = results.status || rawData.status || "";
+    console.log("DEBUG FULL PAYLOAD:", JSON.stringify(rawData, null, 2));
+
+    const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
+
+    let orderId = results.transactionReference || results.transactionId || results.transaction_reference || null;
+
+    // Fallback: lookup by MerchantRequestID
+    if (!orderId) {
+        const merchantRequestID = results.MerchantRequestID || results.merchantRequestId || null;
+        if (merchantRequestID) {
+            const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', merchantRequestID).get();
+            if (!querySnapshot.empty) {
+                orderId = querySnapshot.docs[0].id;
+            }
+        }
+    }
 
     if (!orderId) {
         console.log("⚠️ [LOG] Callback Error: Order ID still missing.");
-        console.log("DEBUG FULL PAYLOAD:", JSON.stringify(rawData));
         return res.sendStatus(200);
+    }
+
+    // Determine status
+    let status = results.status || rawData.status || "";
+    if (!status && results.ResultCode !== undefined) {
+        status = results.ResultCode === 0 ? 'SUCCESS' : 'FAILED';
     }
 
     try {
@@ -150,8 +185,32 @@ app.post('/api/payment-callback', async (req, res) => {
             console.log(`❌ [LOG] CANCELLED: Order ${orderId} declined. Status: ${status}`);
             await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
-    } catch (e) { console.error("❌ [CALLBACK ERROR]:", e.message); }
+    } catch (e) {
+        console.error("❌ [CALLBACK ERROR]:", e.message);
+    }
+
     res.sendStatus(200);
+});
+
+// --- NEW: ORDER STATUS CHECK ROUTE ---
+app.get('/api/order-status/:orderId', async (req, res) => {
+    try {
+        const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Order not found' });
+        }
+        const data = orderDoc.data();
+        res.status(200).json({
+            success: true,
+            orderId: req.params.orderId,
+            status: data.status || 'PENDING',
+            payerName: data.payerName,
+            amount: data.amount,
+            eventName: data.eventName
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 // --- 6. PDF TICKET GENERATION ---
@@ -159,21 +218,36 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) throw new Error("Order not found");
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
+
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
-        await page.setContent(`<html><body style="background:#000; color:#fff; text-align:center;">
-            <div style="border:2px solid ${meta.accent}; padding:50px;">
-                <h1>${meta.venue}</h1>
-                <h2>${data.payerName}</h2>
-                <p>KES ${meta.price} | PAID</p>
-                <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode">
-            </div>
-        </body></html>`);
-        const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
-        res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
+        await page.setContent(`
+        <html>
+            <body style="background:#000; color:#fff; text-align:center; font-family:Arial;">
+                <div style="border:2px solid ${meta.accent}; padding:50px; margin:20px;">
+                    <h1 style="color:${meta.accent};">SARAMI EVENTS</h1>
+                    <h2>${meta.venue}</h2>
+                    <h2>${meta.name}</h2>
+                    <h3>${data.payerName}</h3>
+                    <p>KES ${meta.price} | ${data.status === 'PAID' ? 'PAID' : 'PENDING'}</p>
+                    <p>Date: February 14, 2026</p>
+                    <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode&multiplebarcodes=false&translate-esc=false&unit=Fit&dpi=96&imagetype=Gif&rotation=0&color=%23ffffff&bgcolor=%23000000&fontcolor=%23ffffff&qunit=Mm&quiet=10" style="margin-top:30px;">
+                    <p style="margin-top:30px; font-size:12px;">Ticket ID: ${req.params.orderId}</p>
+                </div>
+            </body>
+        </html>`);
+
+        const pdf = await page.pdf({ format: 'A5', landscape: true, printBackground: true });
+        res.set({ 'Content-Type': 'application/pdf' });
+        res.send(pdf);
+    } catch (e) {
+        res.status(500).send(`Error: ${e.message}`);
+    } finally {
+        if (browser) await browser.close();
+    }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11.8 - ONLINE`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V11.8 - ONLINE on port ${PORT}`));
