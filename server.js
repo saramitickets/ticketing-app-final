@@ -1,8 +1,7 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.6 (STABLE RESTORE)
-// FEATURES: Restored Logs, Eldoret Luxury Theme, Itinerary Design
+// SARAMI EVENTS TICKETING BACKEND - V15.7 (CALLBACK FIXED)
+// FEATURES: Restored Logs, Eldoret Luxury Theme, Itinerary Design, Robust Callback
 // ==========================================
-
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -12,7 +11,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 
 // --- BYPASS SETTING ---
-const PAYMENT_BYPASS_MODE = false; 
+const PAYMENT_BYPASS_MODE = false;
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
@@ -60,23 +59,23 @@ async function getAuthToken() {
 
 function getEventDetails(eventId, packageTier) {
     const eventMap = {
-        'NAIVASHA': { 
-            venue: "Elsamere Resort, Naivasha", 
+        'NAIVASHA': {
+            venue: "Elsamere Resort, Naivasha",
             history: "Former home of Joy & George Adamson (Born Free)",
-            color: "#6b0f0f", bg: "#120202", accent: "#D4AF37", 
-            packages: { 'ETERNAL': { name: "Eternal Lakeside Embrace" }, 'MOONLIT': { name: "Moonlit Lakeside Spark" }, 'SUNRISE': { name: "Sunrise Lakeside Whisper" } } 
+            color: "#6b0f0f", bg: "#120202", accent: "#D4AF37",
+            packages: { 'ETERNAL': { name: "Eternal Lakeside Embrace" }, 'MOONLIT': { name: "Moonlit Lakeside Spark" }, 'SUNRISE': { name: "Sunrise Lakeside Whisper" } }
         },
-        'ELDORET': { 
-            venue: "Marura Gardens, Eldoret", 
+        'ELDORET': {
+            venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#004d40", bg: "#002b25", accent: "#E2C275", 
-            packages: { 'FLAME': { name: "Eternal Flame Dinner" }, 'SPARK': { name: "Sunset Spark" } } 
+            color: "#004d40", bg: "#002b25", accent: "#E2C275",
+            packages: { 'FLAME': { name: "Eternal Flame Dinner" }, 'SPARK': { name: "Sunset Spark" } }
         },
-        'NAIROBI': { 
-            venue: "Sagret Gardens, Nairobi", 
+        'NAIROBI': {
+            venue: "Sagret Gardens, Nairobi",
             history: "An Enchanted Garden Oasis in the Heart of the City",
-            color: "#4b0082", bg: "#1a0033", accent: "#D4AF37", 
-            packages: { 'CITYGLOW': { name: "City Glow Romance" } } 
+            color: "#4b0082", bg: "#1a0033", accent: "#D4AF37",
+            packages: { 'CITYGLOW': { name: "City Glow Romance" } }
         }
     };
     const event = eventMap[eventId] || eventMap['NAIROBI'];
@@ -85,7 +84,7 @@ function getEventDetails(eventId, packageTier) {
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
 
-// --- 3. ORIGINAL EMAIL FUNCTION ---
+// --- 3. EMAIL FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId}`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
@@ -101,13 +100,16 @@ async function sendTicketEmail(orderData, orderId) {
             </div>`
         });
         console.log(`✅ [LOG] Email delivered to ${orderData.payerEmail}`);
-    } catch (err) { console.error("❌ [EMAIL ERROR]:", err.message); }
+    } catch (err) {
+        console.error("❌ [EMAIL ERROR]:", err.message);
+    }
 }
 
-// --- 4. ORIGINAL BOOKING ROUTE ---
+// --- 4. CREATE ORDER ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Amount: ${amount} | Event: ${eventId}`);
+
     try {
         const orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
@@ -117,7 +119,11 @@ app.post('/api/create-order', async (req, res) => {
 
         if (PAYMENT_BYPASS_MODE) {
             console.log(`⚠️ [BYPASS] Payment bypassed for Order: ${orderRef.id}`);
-            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp(), bypass: true });
+            await orderRef.update({ 
+                status: 'PAID', 
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(), 
+                bypass: true 
+            });
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
         }
@@ -126,67 +132,147 @@ app.post('/api/create-order', async (req, res) => {
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
 
         const payload = {
-            transactionId: merchantTxId, transactionReference: orderRef.id,
-            amount: Number(amount), merchantId: "139", transactionTypeId: 1,
-            payerAccount: formatPhone(payerPhone), narration: `Sarami: ${eventName}`,
+            transactionId: merchantTxId,
+            transactionReference: orderRef.id,
+            amount: Number(amount),
+            merchantId: "139",
+            transactionTypeId: 1,
+            payerAccount: formatPhone(payerPhone),
+            narration: `Sarami: ${eventName}`,
             promptDisplayAccount: "Sarami Events",
-            callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback", ptyId: 1
+            callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
+            ptyId: 1
         };
 
-        const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { headers: { 'Authorization': `Bearer ${token}` } });
+        const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
+            headers: { 'Authorization': `Bearer ${token}` } 
+        });
+
         await orderRef.update({ merchantRequestID: merchantTxId });
         console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
+
         res.status(200).json({ success: true, orderId: orderRef.id });
-    } catch (err) { console.error("❌ [CREATE ERROR]:", err.message); res.status(500).json({ success: false }); }
+    } catch (err) {
+        console.error("❌ [CREATE ERROR]:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
-// --- 5. ORIGINAL CALLBACK ROUTE ---
+// --- 5. IMPROVED CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
     console.log("📥 [LOG] Payment Callback Received");
-    let rawData = req.body;
-    const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
-    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
+    
+    // Very helpful for debugging - log the full raw payload
+    console.log("Raw callback body:", JSON.stringify(req.body, null, 2));
+
+    let body = req.body;
+
+    // Handle common nesting patterns
+    if (body.Body?.stkCallback) {
+        body = body.Body.stkCallback;
+    } else if (body.results) {
+        body = body.results;
+    } else if (body.result) {
+        body = body.result;
+    }
+
+    // Try to find merchant ID with many possible field names
+    const possibleMerchantFields = [
+        body.MerchantRequestID,
+        body.merchantRequestID,
+        body.merchantRequestId,
+        body.merchantTxnId,
+        body.merchantTransactionId,
+        body.transactionId,
+        body.TransactionID,
+        body.transactionReference,
+        body.checkoutRequestID,
+        body.CheckoutRequestID,
+        body.reference,
+        body.Reference
+    ];
+
+    const mReqId = possibleMerchantFields.find(id => 
+        id && typeof id === 'string' && id.trim().length >= 6
+    );
 
     if (!mReqId) {
-        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID missing.");
+        console.error("❌ [LOG] CALLBACK ERROR: Could not find any merchant transaction ID");
+        console.error("Available top-level fields:", Object.keys(body));
         return res.sendStatus(200);
     }
 
+    console.log(`🔍 [CALLBACK] Found merchant ref: ${mReqId}`);
+
     try {
-        const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
+        const querySnapshot = await db.collection('orders')
+            .where('merchantRequestID', '==', mReqId)
+            .limit(1)
+            .get();
+
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback No Order Found: ${mReqId}`);
+            console.error(`⚠️ [LOG] No order found for merchant ref: ${mReqId}`);
             return res.sendStatus(200);
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
-        const statusCode = results.statusCode || rawData.statusCode || rawData.status;
-        const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
+
+        // Flexible success detection
+        const resultCode = 
+            body.ResultCode ??
+            body.resultCode ??
+            body.statusCode ??
+            (body.status === 'SUCCESS' || body.status === 'success' ? 0 : 1);
+
+        const isSuccess = resultCode === 0 || resultCode === 200;
 
         if (isSuccess) {
             console.log(`💰 [LOG] PAID: Order ${orderId} verified.`);
-            await db.collection('orders').doc(orderId).update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            await orderDoc.ref.update({ 
+                status: 'PAID',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                paymentResult: body,
+                paymentCompletedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            console.log(`❌ [LOG] CANCELLED: Order ${orderId}`);
-            await db.collection('orders').doc(orderId).update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            console.log(`❌ [LOG] FAILED/CANCELLED: Order ${orderId} - Code: ${resultCode}`);
+            await orderDoc.ref.update({ 
+                status: 'CANCELLED',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                paymentResult: body,
+                failureReason: body.ResultDesc || body.message || 'Unknown'
+            });
         }
-    } catch (e) { console.error("❌ [CALLBACK ERROR]:", e.message); }
+    } catch (e) {
+        console.error("❌ [CALLBACK PROCESSING ERROR]:", e.message);
+    }
+
+    // ALWAYS acknowledge to prevent provider retries
     res.sendStatus(200);
 });
 
-// --- 6. LUXURY PDF GENERATION ---
+// --- 6. PDF TICKET GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     console.log(`🖨️ [LOG] Generating PDF for Order: ${req.params.orderId}`);
+
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) {
+            return res.status(404).send("Order not found");
+        }
+
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
         const displayPrice = data.amount ? data.amount.toLocaleString() : "Varies";
 
-        browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+        browser = await puppeteer.launch({ 
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            headless: true
+        });
+        
         const page = await browser.newPage();
         const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
 
@@ -227,15 +313,30 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
             <div class="page"><div class="frame"><div class="itin-container">
                 <div style="text-align:center; font-family:'Playfair Display'; font-size:32px; font-style:italic; color:${meta.accent}; margin-bottom:40px;">The Evening Itinerary</div>
                 <div class="itin-row"><div class="itin-time">18:30</div><div class="itin-divider"></div><div><div style="font-family:'Montserrat'; font-weight:700; font-size:22px;">Welcoming Cocktails</div><div style="color:#888;">Chilled signature cocktails upon arrival.</div></div></div>
-                <div class="itin-row"><div class="itin-time">19:00</div><div class="itin-divider active"></div><div><div style="font-family:'Montserrat'; font-weight:700; font-size:22px; color:${meta.accent};">Couples Games & Karaoke</div><div style="color:#888;">An hour of laughter, bonding, and melody.</div></div></div>
+                <div class="itin-row"><div class="itin-time">19:00</div><div class="itin-divider active"></div><div><div style="font-family:'Montserrat'; font-weight:700; font-size:22px; color:${meta.accent}">Couples Games & Karaoke</div><div style="color:#888;">An hour of laughter, bonding, and melody.</div></div></div>
                 <div class="itin-row"><div class="itin-time">20:00</div><div class="itin-divider"></div><div><div style="font-family:'Montserrat'; font-weight:700; font-size:22px;">3-Course Gourmet Banquet</div><div style="color:#888;">Curated culinary excellence for two.</div></div></div>
                 <div style="text-align:center; margin-top:40px; font-family:'Playfair Display'; color:${meta.accent}; font-size:24px;">"Happy Valentine's to you and yours."</div>
             </div></div></div>
             </body></html>`);
-        const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
+
+        const pdf = await page.pdf({ 
+            width: '210mm', 
+            height: '148mm', 
+            printBackground: true,
+            margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' }
+        });
+
         console.log(`✅ [LOG] PDF Generated for ${data.payerName}`);
-        res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { console.error("❌ [PDF ERROR]:", e.message); res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
+        res.set('Content-Type', 'application/pdf');
+        res.send(pdf);
+    } catch (e) {
+        console.error("❌ [PDF ERROR]:", e.message);
+        res.status(500).send("Error generating ticket PDF");
+    } finally {
+        if (browser) await browser.close();
+    }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.6 - SYSTEM ONLINE`));
+app.listen(PORT, () => {
+    console.log(`🚀 SARAMI EVENTS TICKETING BACKEND v15.7 - SYSTEM ONLINE on port ${PORT}`);
+});
