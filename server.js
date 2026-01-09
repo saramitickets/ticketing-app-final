@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.1 (STABLE WITH LOGS)
-// FEATURES: Premium Eldoret Theme, Enhanced Itinerary, Full Process Logging
+// SARAMI EVENTS TICKETING BACKEND - V15.2 (STABLE & LOGGING)
+// UPDATED: Improved Callback Handling & Error Prevention
 // ==========================================
 
 const express = require('express');
@@ -98,7 +98,7 @@ function getEventDetails(eventId, packageTier) {
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
 
-// --- 3. LUXURY EMAIL FUNCTION (WITH LOGS) ---
+// --- 3. LUXURY EMAIL FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} (${orderData.payerEmail})`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
@@ -127,7 +127,7 @@ async function sendTicketEmail(orderData, orderId) {
     }
 }
 
-// --- 4. MAIN BOOKING ROUTE (WITH LOGS) ---
+// --- 4. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Event: ${eventId} | Package: ${packageTier}`);
@@ -183,35 +183,55 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. CALLBACK ROUTE (WITH LOGS) ---
+// --- 5. CALLBACK ROUTE (UPDATED & FIXED) ---
 app.post('/api/payment-callback', async (req, res) => {
-    let rawData = req.body;
     console.log("📥 [LOG] Callback received from Payment Gateway");
     
+    const rawData = req.body;
+    // Normalize data extraction based on various potential gateway payload structures
     const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
-    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
     
+    // Attempt to extract the Merchant Transaction ID from multiple possible fields
+    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId || rawData.transactionId;
+
+    // --- SAFETY CHECK: Prevent Firestore query crash if ID is missing ---
+    if (!mReqId) {
+        console.error("❌ [LOG] CALLBACK ERROR: MerchantRequestID not found in request body.", JSON.stringify(rawData));
+        return res.status(400).send("No Transaction ID provided.");
+    }
+
     try {
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
+        
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback Error: No order found for MerchantRef: ${mReqId}`);
-            return res.sendStatus(200);
+            console.error(`⚠️ [LOG] Callback Warning: No order found for MerchantRef: ${mReqId}`);
+            return res.sendStatus(200); // Always send 200 to gateway even if order not found
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
         const orderRef = db.collection('orders').doc(orderId);
-        const statusCode = results.statusCode || rawData.statusCode || rawData.status;
-        const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
+        
+        // Extract status indicators
+        const statusCode = results.statusCode || rawData.statusCode || results.ResultCode;
+        const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || statusCode === 0 || results.ResultCode === 0);
 
         if (isSuccess) {
-            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId} marked as PAID.`);
-            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId} (${orderDoc.data().payerName}) marked as PAID.`);
+            await orderRef.update({ 
+                status: 'PAID', 
+                updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+            });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            const msg = rawData.message || results.message || "Declined/Cancelled";
-            console.log(`❌ [LOG] PAYMENT FAILED: Order ${orderId}. Reason: ${msg}`);
-            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp(), cancelReason: msg });
+            // This captures cancellations by user or technical failures
+            const msg = results.message || results.ResultDesc || "User Declined or Cancelled";
+            console.log(`❌ [LOG] PAYMENT FAILED/CANCELLED: Order ${orderId}. Reason: ${msg}`);
+            await orderRef.update({ 
+                status: 'CANCELLED', 
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(), 
+                cancelReason: msg 
+            });
         }
     } catch (e) { 
         console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message); 
@@ -327,4 +347,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.1 - SYSTEM ONLINE & LOGGING`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.2 - SYSTEM ONLINE & LOGGING`));
