@@ -2,7 +2,6 @@
 // SARAMI EVENTS TICKETING BACKEND - V15.3 (STABLE & LOGGING)
 // UPDATED: Refined Callback for User Cancellations & ID Mapping
 // ==========================================
-
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -10,10 +9,8 @@ const puppeteer = require('puppeteer');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
-
 // --- BYPASS SETTING ---
-const PAYMENT_BYPASS_MODE = false; 
-
+const PAYMENT_BYPASS_MODE = false;
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
 try {
@@ -26,28 +23,23 @@ try {
 } catch (error) {
     console.error("❌ Firebase Error:", error.message);
 }
-
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.text({ type: '*/*' }));
-
+// Removed: app.use(express.text({ type: '*/*' })); // This was causing issues with JSON parsing in callbacks
 const PORT = process.env.PORT || 10000;
-
 // --- 2. HELPERS & EVENT DATA ---
 function formatPhone(phone) {
     let p = phone.replace(/\D/g, '');
     if (p.startsWith('0')) p = '254' + p.slice(1);
     return p.startsWith('254') ? p : '254' + p;
 }
-
 async function getAuthToken() {
     const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
         username: process.env.INFINITIPAY_MERCHANT_USERNAME,
@@ -55,41 +47,40 @@ async function getAuthToken() {
     });
     return authRes.data.access_token;
 }
-
 function getEventDetails(eventId, packageTier) {
     const eventMap = {
-        'NAIVASHA': { 
-            venue: "Elsamere Resort, Naivasha", 
+        'NAIVASHA': {
+            venue: "Elsamere Resort, Naivasha",
             history: "Former home of Joy & George Adamson (Born Free)",
-            color: "#6b0f0f", 
+            color: "#6b0f0f",
             bg: "#120202",
-            accent: "#D4AF37", 
-            packages: { 
-                'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins…" }, 
-                'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." }, 
-                'SUNRISE': { name: "Sunrise Lakeside Whisper", price: "14,000", quote: "A gentle escape where love speaks softly." } 
-            } 
+            accent: "#D4AF37",
+            packages: {
+                'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins…" },
+                'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." },
+                'SUNRISE': { name: "Sunrise Lakeside Whisper", price: "14,000", quote: "A gentle escape where love speaks softly." }
+            }
         },
-        'ELDORET': { 
-            venue: "Marura Gardens, Eldoret", 
+        'ELDORET': {
+            venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#004d40", 
+            color: "#004d40",
             bg: "#002b25",
-            accent: "#E2C275", 
-            packages: { 
-                'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." }, 
-                'SPARK': { name: "Sunset Spark", price: "7,000", quote: "Simple, sweet, and unforgettable." } 
-            } 
+            accent: "#E2C275",
+            packages: {
+                'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
+                'SPARK': { name: "Sunset Spark", price: "7,000", quote: "Simple, sweet, and unforgettable." }
+            }
         },
-        'NAIROBI': { 
-            venue: "Sagret Gardens, Nairobi", 
+        'NAIROBI': {
+            venue: "Sagret Gardens, Nairobi",
             history: "An Enchanted Garden Oasis in the Heart of the City",
-            color: "#4b0082", 
+            color: "#4b0082",
             bg: "#1a0033",
-            accent: "#D4AF37", 
-            packages: { 
-                'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." } 
-            } 
+            accent: "#D4AF37",
+            packages: {
+                'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." }
+            }
         }
     };
     const event = eventMap[eventId] || eventMap['NAIROBI'];
@@ -97,7 +88,6 @@ function getEventDetails(eventId, packageTier) {
     const pkg = event.packages[pKey] || { name: "Luxury Entry", price: "Varies", quote: "A perfect night of love." };
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
-
 // --- 3. LUXURY EMAIL FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} (${orderData.payerEmail})`);
@@ -113,7 +103,7 @@ async function sendTicketEmail(orderData, orderId) {
                     <h1 style="color: ${meta.color}; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; margin-bottom: 20px;">RESERVATION CONFIRMED</h1>
                     <p style="font-size: 18px; color: #333;">Dear <strong>${orderData.payerName}</strong>, your seat at <strong>${meta.venue}</strong> is reserved.</p>
                     <div style="margin: 30px 0;">
-                        <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
+                        <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}"
                            style="background-color: ${meta.color}; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 14px; text-transform: uppercase; display: inline-block;">
                             DOWNLOAD DIGITAL TICKET
                         </a>
@@ -126,33 +116,29 @@ async function sendTicketEmail(orderData, orderId) {
         console.error("❌ [LOG] EMAIL ERROR:", err.message);
     }
 }
-
 // --- 4. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Event: ${eventId} | Package: ${packageTier}`);
-    
+   
     try {
         const orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-
         if (PAYMENT_BYPASS_MODE) {
             console.log(`⚠️ [LOG] BYPASS MODE ACTIVE: Auto-approving Order ${orderRef.id}`);
-            await orderRef.update({ 
-                status: 'PAID', 
+            await orderRef.update({
+                status: 'PAID',
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                bypass: true 
+                bypass: true
             });
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
         }
-
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
-
         const payload = {
             transactionId: merchantTxId,
             transactionReference: orderRef.id,
@@ -165,16 +151,13 @@ app.post('/api/create-order', async (req, res) => {
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
-
         const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-
-        await orderRef.update({ 
-            merchantRequestID: merchantTxId, 
-            gatewayRawId: stkRes.data.transactionId || '' 
+        await orderRef.update({
+            merchantRequestID: merchantTxId,
+            gatewayRawId: stkRes.data.transactionId || ''
         });
-
         console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
@@ -182,62 +165,78 @@ app.post('/api/create-order', async (req, res) => {
         res.status(500).json({ success: false, debug: err.message });
     }
 });
-
-// --- 5. CALLBACK ROUTE (FIXED & TESTED) ---
-app.post('/api/payment-callback', async (req, res) => {
+// --- 5. CALLBACK ROUTE (FIXED FOR RAW JSON BODY) ---
+app.post('/api/payment-callback', express.raw({ type: 'application/json' }), async (req, res) => {
     console.log("📥 [LOG] Callback received from Payment Gateway");
-    
-    let rawData = req.body;
-    
-    // As seen in your logs, the merchantTxnId is nested inside "results"
-    const results = (typeof rawData.results === 'string') ? JSON.parse(rawData.results) : (rawData.results || {});
-    
-    // Look for merchantTxnId first (confirmed from your log screenshot)
-    const mReqId = results.merchantTxnId || results.MerchantRequestID || rawData.transactionId;
-    const statusCode = rawData.statusCode || results.statusCode;
 
-    if (!mReqId) {
-        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID not found in body.", JSON.stringify(rawData));
-        return res.status(400).send("ID Missing");
+    let rawBody = req.body.toString('utf8'); // Convert buffer to string
+    console.log("📥 [LOG] Raw callback body:", rawBody);
+
+    let payload;
+    try {
+        payload = JSON.parse(rawBody);
+    } catch (err) {
+        console.error("❌ [LOG] Failed to parse callback JSON:", err.message);
+        return res.sendStatus(400);
     }
 
+    // Now safely extract from parsed payload
+    const results = payload.results || {};
+    
+    // Handle both possible key names (case-sensitive!)
+    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.merchantTxId || payload.transactionId;
+
+    const statusCode = payload.statusCode || results.statusCode;
+    const message = payload.message || results.message || "Unknown status";
+
+    if (!mReqId) {
+        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID not found in body.", JSON.stringify(payload));
+        return res.status(400).send("Merchant ID Missing");
+    }
+
+    console.log(`🔍 [LOG] Found Merchant Request ID: ${mReqId}`);
+
     try {
-        const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
-        
+        const querySnapshot = await db.collection('orders')
+            .where('merchantRequestID', '==', mReqId)
+            .limit(1)
+            .get();
+
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback Warning: No order found in DB for Ref: ${mReqId}`);
-            return res.sendStatus(200);
+            console.error(`⚠️ [LOG] No order found for MerchantRef: ${mReqId}`);
+            return res.sendStatus(200); // Still ACK to gateway
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
         const orderRef = db.collection('orders').doc(orderId);
-        
-        // Check for success (200 or 0)
-        const isSuccess = (statusCode == 200 || statusCode == 0);
+
+        const isSuccess = (statusCode == 200 || statusCode == 0 || statusCode === "0" || statusCode === "200");
 
         if (isSuccess) {
-            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId} marked as PAID.`);
-            await orderRef.update({ 
-                status: 'PAID', 
-                updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+            console.log(`💰 [LOG] PAYMENT SUCCESS for Order ${orderId}`);
+            await orderRef.update({
+                status: 'PAID',
+                gatewayResponse: payload, // Optional: store full response for debugging
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            const reason = rawData.message || results.message || "Request Cancelled by user";
-            console.log(`🛑 [LOG] PAYMENT CANCELLED: Order ${orderId}. Reason: ${reason}`);
-            await orderRef.update({ 
-                status: 'CANCELLED', 
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(), 
-                cancelReason: reason 
+            console.log(`🛑 [LOG] PAYMENT FAILED/CANCELLED for Order ${orderId}. Reason: ${message}`);
+            await orderRef.update({
+                status: 'CANCELLED',
+                cancelReason: message,
+                gatewayResponse: payload,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
         }
-    } catch (e) { 
-        console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message); 
+    } catch (e) {
+        console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message);
     }
+
+    // Always respond 200 to prevent gateway retries
     res.sendStatus(200);
 });
-
 // --- 6. LUXURY PDF GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
@@ -245,14 +244,12 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
         if (!orderDoc.exists) throw new Error("Order not found");
-        
+       
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
-
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
         const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
-
         await page.setContent(`
             <html>
             <head>
@@ -260,10 +257,10 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 <style>
                     body { margin: 0; padding: 0; background: #000; }
                     .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; background: ${meta.bg}; }
-                    .border-frame { 
-                        position: absolute; inset: 12mm; 
-                        border: 1px solid ${meta.accent}; 
-                        background: linear-gradient(145deg, ${meta.bg}, #000); 
+                    .border-frame {
+                        position: absolute; inset: 12mm;
+                        border: 1px solid ${meta.accent};
+                        background: linear-gradient(145deg, ${meta.bg}, #000);
                         z-index: 2; display: flex; flex-direction: column; border-radius: 4px;
                     }
                     .corner { position: absolute; width: 40px; height: 40px; border: 3px solid ${meta.accent}; z-index: 5; }
@@ -340,10 +337,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
         console.log(`✅ [LOG] PDF generated and sent for Order: ${req.params.orderId}`);
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { 
+    } catch (e) {
         console.error("❌ [LOG] PDF GENERATION ERROR:", e.message);
-        res.status(500).send(e.message); 
+        res.status(500).send(e.message);
     } finally { if (browser) await browser.close(); }
 });
-
 app.listen(PORT, () => console.log(`🚀 SARAMI V15.3 - SYSTEM ONLINE & LOGGING`));
