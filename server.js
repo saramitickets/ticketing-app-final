@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.7
-// UPDATED: Inquisitive Lifecycle Logging + Nairobi Price Fix
+// SARAMI EVENTS TICKETING BACKEND - V15.8
+// UPDATED: Restored Payment Bypass + Inquisitive Logging
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -10,7 +10,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const PAYMENT_BYPASS_MODE = true;
+const PAYMENT_BYPASS_MODE = true; // Set to true to skip payment prompt
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
@@ -95,7 +95,6 @@ async function sendTicketEmail(orderData, orderId) {
     console.log(`📩 [EMAIL PROCESS] Starting email dispatch for Order: ${orderId}`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
-        console.log(`📩 [EMAIL PROCESS] Generating HTML content for ${orderData.payerEmail}...`);
         await apiInstance.sendTransacEmail({
             sender: { email: "etickets@saramievents.co.ke", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
@@ -120,21 +119,30 @@ async function sendTicketEmail(orderData, orderId) {
     }
 }
 
-// --- 4. CREATE ORDER ---
+// --- 4. CREATE ORDER (BYPASS LOGIC RESTORED) ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
-    console.log(`🚀 [BOOKING START] New request from ${payerName} (${payerPhone}) for ${eventName}`);
+    console.log(`🚀 [BOOKING START] New request from ${payerName} for ${eventName}`);
     try {
         const orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-        console.log(`📝 [BOOKING] Order saved to Database with ID: ${orderRef.id}`);
+
+        if (PAYMENT_BYPASS_MODE) {
+            console.log(`⚠️ [BYPASS] Payment Bypass is ACTIVE. Auto-approving Order: ${orderRef.id}`);
+            await orderRef.update({
+                status: 'PAID',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                bypass: true
+            });
+            await sendTicketEmail(req.body, orderRef.id);
+            return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
+        }
 
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
-        
         const payload = {
             transactionId: merchantTxId,
             transactionReference: orderRef.id,
@@ -148,30 +156,27 @@ app.post('/api/create-order', async (req, res) => {
             ptyId: 1
         };
 
-        console.log(`📲 [STK PUSH] Sending STK Push to gateway for Ref: ${merchantTxId}`);
+        console.log(`📲 [STK PUSH] Requesting prompt for Ref: ${merchantTxId}`);
         await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
         await orderRef.update({ merchantRequestID: merchantTxId });
-        console.log(`✅ [BOOKING] STK Push Triggered. Waiting for user to enter PIN...`);
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
-        console.error("❌ [BOOKING] Error creating order:", err.message);
+        console.error("❌ [BOOKING] Error:", err.message);
         res.status(500).json({ success: false, debug: err.message });
     }
 });
 
-// --- 5. CALLBACK ROUTE (INQUISITIVE LOGGING) ---
+// --- 5. CALLBACK ROUTE ---
 app.post('/api/payment-callback', express.raw({ type: '*/*' }), async (req, res) => {
-    console.log("📥 [CALLBACK] Data received from InfinitiPay gateway");
+    console.log("📥 [CALLBACK] Data received from gateway");
     let rawBody = req.body.toString('utf8').trim();
-
     if (rawBody.startsWith('{')) {
         const lastBrace = rawBody.lastIndexOf('}');
         if (lastBrace !== -1) rawBody = rawBody.substring(0, lastBrace + 1);
     }
-
     let payload = {};
     try {
         payload = JSON.parse(rawBody);
@@ -181,46 +186,27 @@ app.post('/api/payment-callback', express.raw({ type: '*/*' }), async (req, res)
             try { payload[key] = JSON.parse(value); } catch { payload[key] = value; }
         }
     }
-
     const results = payload.results || payload.Result || payload; 
     const mReqId = results.merchantTxnId || results.MerchantRequestID || results.merchantTxId || payload.merchantTxnId;
     const statusCode = (payload.statusCode !== undefined) ? payload.statusCode : (results.statusCode || payload.ResultCode);
-    const message = payload.message || results.message || payload.ResultDesc || "No specific reason provided by gateway";
+    const message = payload.message || results.message || payload.ResultDesc || "No reason provided";
 
-    console.log(`🔍 [CALLBACK DEBUG] MerchantRef: ${mReqId} | Status: ${statusCode} | GatewayMsg: ${message}`);
-
-    if (!mReqId) {
-        console.error("❌ [CALLBACK ERROR] Could not extract Merchant ID from payload");
-        return res.sendStatus(200);
-    }
+    console.log(`🔍 [CALLBACK DEBUG] Ref: ${mReqId} | Status: ${statusCode} | Msg: ${message}`);
+    if (!mReqId) return res.sendStatus(200);
 
     try {
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
-        if (querySnapshot.empty) {
-            console.warn(`⚠️ [CALLBACK] Received payment info for unknown Ref: ${mReqId}`);
-            return res.sendStatus(200);
+        if (!querySnapshot.empty) {
+            const orderDoc = querySnapshot.docs[0];
+            const orderRef = db.collection('orders').doc(orderDoc.id);
+            if (statusCode == 0 || statusCode == "0" || statusCode == 200 || statusCode == "200") {
+                await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+                await sendTicketEmail(orderDoc.data(), orderDoc.id);
+            } else {
+                await orderRef.update({ status: 'CANCELLED', cancelReason: message, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            }
         }
-
-        const orderDoc = querySnapshot.docs[0];
-        const orderRef = db.collection('orders').doc(orderDoc.id);
-        const isSuccess = (statusCode == 0 || statusCode == "0" || statusCode == 200 || statusCode == "200");
-
-        if (isSuccess) {
-            console.log(`💰 [PAYMENT SUCCESS] Order ${orderDoc.id} confirmed! Triggering ticket...`);
-            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-            await sendTicketEmail(orderDoc.data(), orderDoc.id);
-        } else {
-            console.log(`🛑 [PAYMENT CANCELLED/FAILED] Order ${orderDoc.id}. Reason: ${message}`);
-            await orderRef.update({ 
-                status: 'CANCELLED', 
-                cancelReason: message, 
-                updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-            });
-        }
-    } catch (e) { 
-        console.error("❌ [CALLBACK] Database update error:", e.message); 
-    }
-
+    } catch (e) { console.error("❌ [CALLBACK DB ERROR]:", e.message); }
     res.sendStatus(200);
 });
 
@@ -233,11 +219,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         if (!orderDoc.exists) throw new Error("Order not found");
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
-        
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
         const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
-        
         await page.setContent(`
             <html>
             <head>
@@ -317,14 +301,13 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 </div>
             </body>
             </html>`);
-        
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
-        console.log(`✅ [PDF PROCESS] Ticket successfully generated and served for ${data.payerName}`);
+        console.log(`✅ [PDF PROCESS] Ticket served for ${data.payerName}`);
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
     } catch (e) {
-        console.error("❌ [PDF PROCESS] FAILED to generate PDF:", e.message);
+        console.error("❌ [PDF PROCESS] FAILED:", e.message);
         res.status(500).send(e.message);
     } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.7 - SYSTEM ONLINE & LOGGING`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.8 - SYSTEM ONLINE & BYPASS READY`));
