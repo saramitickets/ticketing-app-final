@@ -1,6 +1,5 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V12.0 (FINAL OPTIMIZED)
-// FIXED: Callback mapping, enhanced logging, and custom M-Pesa prompt name
+// SARAMI EVENTS TICKETING BACKEND - V12.0 (MODIFIED WITH BYPASS)
 // ==========================================
 
 const express = require('express');
@@ -10,6 +9,10 @@ const puppeteer = require('puppeteer');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+
+// --- BYPASS SETTING ---
+// Set to true to skip actual payment and issue tickets immediately
+const PAYMENT_BYPASS_MODE = true; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
@@ -97,6 +100,20 @@ app.post('/api/create-order', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
+        // --- BYPASS LOGIC START ---
+        if (PAYMENT_BYPASS_MODE) {
+            console.log(`⚠️ [BYPASS] Payment bypassed for Order: ${orderRef.id}`);
+            await orderRef.update({ 
+                status: 'PAID', 
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                bypass: true 
+            });
+            const updatedDoc = await orderRef.get();
+            await sendTicketEmail(updatedDoc.data(), orderRef.id);
+            return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
+        }
+        // --- BYPASS LOGIC END ---
+
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
 
@@ -108,7 +125,7 @@ app.post('/api/create-order', async (req, res) => {
             transactionTypeId: 1,
             payerAccount: formatPhone(payerPhone),
             narration: `Sarami: ${eventName}`,
-            promptDisplayAccount: "Sarami Events", // Displays company name on user phone
+            promptDisplayAccount: "Sarami Events",
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
@@ -168,7 +185,6 @@ app.post('/api/payment-callback', async (req, res) => {
             });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            // Updated to check top-level message first
             const msg = rawData.message || results.message || "Declined/Cancelled";
             console.log(`❌ [LOG] CANCELLED: Order ${orderId}. Message: ${msg}`);
             await orderRef.update({ 
