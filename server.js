@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.5.1
-// MASTER: FINAL LUXURY DESIGN + CALLBACK FIX
+// SARAMI EVENTS TICKETING BACKEND - V11.6
+// MASTER: FINAL LUXURY DESIGN + ROBUST CALLBACK
 // ==========================================
 
 const express = require('express');
@@ -33,9 +33,10 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 const app = express();
 app.use(cors());
 
-// IMPORTANT: Added urlencoded for callbacks that don't send JSON
+// Support for all possible incoming data formats
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.text()); 
 
 const PORT = process.env.PORT || 10000;
 
@@ -100,9 +101,10 @@ async function sendTicketEmail(orderData, orderId) {
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `🎫 Your VIP Invitation: ${meta.name}`,
             htmlContent: `<div style="padding:40px; background:#fafafa; border:4px solid ${meta.accent}; font-family:serif; text-align:center;">
-                <h1 style="color:${meta.color};">Reservation Confirmed</h1>
+                <h1 style="color:${meta.color}; text-transform:uppercase;">Reservation Confirmed</h1>
                 <p>Dear ${orderData.payerName}, your seat at <strong>${meta.venue}</strong> is reserved.</p>
-                <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" style="background:${meta.color}; color:#fff; padding:18px 35px; text-decoration:none; border-radius:50px;">Download Ticket</a>
+                <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
+                   style="background:${meta.color}; color:#fff; padding:18px 35px; text-decoration:none; border-radius:50px;">Download Your Ticket</a>
             </div>`
         });
         console.log(`✅ [LOG] Step 4: Email delivered to ${orderData.payerEmail}`);
@@ -148,23 +150,30 @@ app.post('/api/create-order', async (req, res) => {
             console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}.`);
             return res.status(200).json({ success: true, orderId: orderRef.id });
         } catch (payErr) {
-            console.log(`❌ [LOG] CANCELLED: M-Pesa Push Failed for ${payerName}`);
+            console.log(`❌ [LOG] CANCELLED: M-Pesa Request Failed for ${payerName}`);
             await orderRef.update({ status: 'CANCELLED' });
             return res.status(200).json({ success: true, orderId: orderRef.id, message: "Cancelled" });
         }
     } catch (err) { res.status(500).json({ success: false, debug: err.message }); }
 });
 
-// --- 5. FINAL CALLBACK LOGIC (FIXED) ---
+// --- 5. ROBUST CALLBACK ROUTE (FIXED LOG ISSUE) ---
 app.post('/api/payment-callback', async (req, res) => {
-    // Check Body, then check Query (some providers send data in URL)
-    const data = (Object.keys(req.body).length > 0) ? req.body : req.query;
+    // Collect data from every possible source (Body, Query, or even Raw Text)
+    let payload = req.body;
+    if (typeof req.body === 'string') {
+        try { payload = JSON.parse(req.body); } catch (e) { payload = {}; }
+    }
     
-    const orderId = data.transactionReference || data.merchantReference || (data.data && data.data.transactionReference);
-    const status = data.status || (data.data && data.data.status) || "";
+    // Merge with Query parameters if body is still empty
+    const data = (Object.keys(payload).length > 0) ? payload : req.query;
+    
+    // Identify Order ID and Status using all known InfinitiPay field names
+    const orderId = data.transactionReference || data.merchantReference || (data.data && data.data.transactionReference) || data.orderId;
+    const status = data.status || (data.data && data.data.status) || data.ResultCode || "";
 
     if (!orderId) {
-        console.log("⚠️ [LOG] Callback Error: No Order ID found in payload.");
+        console.log("⚠️ [LOG] Callback Error: No Order ID found in any part of the request.");
         console.log("DEBUG FULL PAYLOAD:", JSON.stringify(data));
         return res.sendStatus(200);
     }
@@ -173,12 +182,15 @@ app.post('/api/payment-callback', async (req, res) => {
         const orderRef = db.collection('orders').doc(orderId);
         const orderDoc = await orderRef.get();
 
-        if (status.toUpperCase() === 'SUCCESS' || status.toUpperCase() === 'COMPLETED') {
+        // Check for success markers (SUCCESS, COMPLETED, or M-Pesa ResultCode 0)
+        const isSuccessful = ['SUCCESS', 'COMPLETED', '0', 0].includes(status) || status.toString().toUpperCase() === 'SUCCESS';
+
+        if (isSuccessful) {
             console.log(`💰 [LOG] PAID: Order ${orderId} verified.`);
             await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
             if (orderDoc.exists) await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            console.log(`❌ [LOG] CANCELLED: Order ${orderId} failed or user declined.`);
+            console.log(`❌ [LOG] CANCELLED: Order ${orderId} failed or user declined. (Status: ${status})`);
             await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
     } catch (e) { console.error("❌ [CALLBACK ERROR]:", e.message); }
@@ -194,14 +206,14 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
-        browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
         const page = await browser.newPage();
-        await page.setContent(`<html><body style="background:#000; color:#fff; text-align:center; font-family:serif;">
-            <div style="border:2px solid ${meta.accent}; margin:20px; padding:50px;">
+        await page.setContent(`<html><body style="background:#000; color:#fff; text-align:center;">
+            <div style="border:2px solid ${meta.accent}; padding:50px;">
                 <h1>${meta.venue}</h1>
                 <h2>${data.payerName}</h2>
                 <p>KES ${meta.price} | PAID</p>
-                <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode" width="150">
+                <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode">
             </div>
         </body></html>`);
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
@@ -209,4 +221,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11.5.1 - ONLINE`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V11.6 - ONLINE`));
