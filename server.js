@@ -1,6 +1,7 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.8 (DEBUGGED & ENHANCED)
-// FIXED: CALLBACK PARSING, ADDED STATUS CHECK ROUTE, CAPTURE STK RESPONSE FOR MAPPING
+// SARAMI EVENTS TICKETING BACKEND - V11.9 (FIXED CALLBACK ORDER LOOKUP)
+// CRITICAL FIX: InfinitiPay uses non-standard callback format without stkCallback wrapper
+// ADDED: Better handling for direct results + statusCode/ResultCode + MerchantRequestID fallback
 // ==========================================
 
 const express = require('express');
@@ -35,10 +36,9 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 const app = express();
 app.use(cors());
 
-// CRITICAL: Diverse parsers to handle various payload types
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.text({ type: '*/*' })); // Catch-all for unusual content types
+app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 10000;
 
@@ -121,23 +121,23 @@ app.post('/api/create-order', async (req, res) => {
 
         console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Response: ${JSON.stringify(stkRes.data)}`);
 
-        // Capture potential mapping IDs from STK response
-        const merchantRequestID = stkRes.data.MerchantRequestID || stkRes.data.merchantRequestId || stkRes.data.transactionId || '';
-        const checkoutRequestID = stkRes.data.CheckoutRequestID || stkRes.data.checkoutRequestId || stkRes.data.transactionReference || '';
+        // Store any IDs returned (InfinitiPay may return MerchantRequestID or similar)
+        const merchantRequestID = stkRes.data.merchantRequestID || stkRes.data.MerchantRequestID || stkRes.data.transactionId || payload.transactionId || '';
+        const checkoutRequestID = stkRes.data.checkoutRequestID || stkRes.data.CheckoutRequestID || '';
 
         await orderRef.update({ merchantRequestID, checkoutRequestID });
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
+        console.error("❌ STK Push Error:", err.response?.data || err.message);
         res.status(500).json({ success: false, debug: err.message });
     }
 });
 
-// --- 5. UPDATED CALLBACK ROUTE ---
+// --- 5. FIXED CALLBACK ROUTE (Handles InfinitiPay's flat format) ---
 app.post('/api/payment-callback', async (req, res) => {
     let rawData = req.body;
 
-    // Handle string body
     if (typeof req.body === 'string') {
         try { rawData = JSON.parse(req.body); } catch (e) {
             const params = new URLSearchParams(req.body);
@@ -147,42 +147,58 @@ app.post('/api/payment-callback', async (req, res) => {
 
     console.log("DEBUG FULL PAYLOAD:", JSON.stringify(rawData, null, 2));
 
-    const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
+    // InfinitiPay seems to send flat { amount, paymentId, statusCode, message, ... }
+    const results = rawData.results || rawData;
 
-    let orderId = results.transactionReference || results.transactionId || results.transaction_reference || null;
+    let orderId = results.transactionReference || results.paymentId || results.orderId || null;
 
-    // Fallback: lookup by MerchantRequestID
+    // Fallback: Use paymentId or MerchantRequestID to query Firestore
     if (!orderId) {
-        const merchantRequestID = results.MerchantRequestID || results.merchantRequestId || null;
-        if (merchantRequestID) {
-            const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', merchantRequestID).get();
-            if (!querySnapshot.empty) {
+        const paymentId = results.paymentId || results.MerchantRequestID || results.merchantRequestID || results.transactionId;
+        if (paymentId) {
+            const querySnapshot = await db.collection('orders')
+                .where('merchantRequestID', '==', paymentId)
+                .get();
+
+            if (querySnapshot.empty) {
+                // Try secondary fields if needed
+                const altSnapshot = await db.collection('orders')
+                    .where('checkoutRequestID', '==', paymentId)
+                    .get();
+                if (!altSnapshot.empty) {
+                    orderId = altSnapshot.docs[0].id;
+                }
+            } else {
                 orderId = querySnapshot.docs[0].id;
             }
         }
     }
 
     if (!orderId) {
-        console.log("⚠️ [LOG] Callback Error: Order ID still missing.");
-        return res.sendStatus(200);
+        console.log("⚠️ [LOG] Callback Error: Order ID still missing. Cannot update status.");
+        return res.sendStatus(200); // Still acknowledge to avoid retries
     }
 
-    // Determine status
-    let status = results.status || rawData.status || "";
-    if (!status && results.ResultCode !== undefined) {
-        status = results.ResultCode === 0 ? 'SUCCESS' : 'FAILED';
+    // Determine success/cancelled
+    let isSuccess = false;
+    if (results.statusCode !== undefined) {
+        isSuccess = results.statusCode == 0 || results.statusCode == "0"; // Common success code
+    } else if (results.ResultCode !== undefined) {
+        isSuccess = results.ResultCode === 0;
+    } else if (results.message && results.message.toLowerCase().includes('success')) {
+        isSuccess = true;
     }
 
     try {
         const orderRef = db.collection('orders').doc(orderId);
         const orderDoc = await orderRef.get();
 
-        if (status.toUpperCase() === 'SUCCESS' || status.toUpperCase() === 'COMPLETED') {
+        if (isSuccess) {
             console.log(`💰 [LOG] PAID: Order ${orderId} verified.`);
             await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
             if (orderDoc.exists) await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            console.log(`❌ [LOG] CANCELLED: Order ${orderId} declined. Status: ${status}`);
+            console.log(`❌ [LOG] CANCELLED/FAILED: Order ${orderId} declined. Message: ${results.message || 'Unknown'}`);
             await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
     } catch (e) {
@@ -192,7 +208,7 @@ app.post('/api/payment-callback', async (req, res) => {
     res.sendStatus(200);
 });
 
-// --- NEW: ORDER STATUS CHECK ROUTE ---
+// --- 6. ORDER STATUS CHECK ROUTE ---
 app.get('/api/order-status/:orderId', async (req, res) => {
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
@@ -213,7 +229,7 @@ app.get('/api/order-status/:orderId', async (req, res) => {
     }
 });
 
-// --- 6. PDF TICKET GENERATION ---
+// --- 7. PDF TICKET GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
@@ -250,4 +266,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11.8 - ONLINE on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V11.9 - ONLINE on port ${PORT}`));
