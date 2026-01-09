@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.9 (FIXED CALLBACK MAPPING)
-// FIXED: Firestore 404 by searching for orders via merchantRequestID
+// SARAMI EVENTS TICKETING BACKEND - V12.0 (FINAL OPTIMIZED)
+// FIXED: Callback mapping, enhanced logging, and custom M-Pesa prompt name
 // ==========================================
 
 const express = require('express');
@@ -108,6 +108,7 @@ app.post('/api/create-order', async (req, res) => {
             transactionTypeId: 1,
             payerAccount: formatPhone(payerPhone),
             narration: `Sarami: ${eventName}`,
+            promptDisplayAccount: "Sarami Events", // Displays company name on user phone
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
@@ -116,7 +117,6 @@ app.post('/api/create-order', async (req, res) => {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        // We save the ID we sent (merchantTxId) so we can find this order when the callback hits
         await orderRef.update({ 
             merchantRequestID: merchantTxId, 
             gatewayRawId: stkRes.data.transactionId || '' 
@@ -129,7 +129,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. FIXED CALLBACK ROUTE ---
+// --- 5. UPDATED CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
     let rawData = req.body;
     if (typeof req.body === 'string') {
@@ -142,25 +142,21 @@ app.post('/api/payment-callback', async (req, res) => {
     console.log("DEBUG FULL PAYLOAD:", JSON.stringify(rawData, null, 2));
 
     const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
-
-    // Identify the transaction using the Merchant ID we generated
     const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
     
     try {
-        // Find the document where merchantRequestID matches the one from the gateway
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
 
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback Error: No order found for merchantRequestID: ${mReqId}`);
-            return res.sendStatus(200); // Send 200 to gateway to stop retries
+            console.error(`⚠️ [LOG] Callback Error: No order found for ID: ${mReqId}`);
+            return res.sendStatus(200);
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
         const orderRef = db.collection('orders').doc(orderId);
         
-        // Determine Status (400 usually means user cancelled, 200/SUCCESS means paid)
-        const statusCode = results.statusCode || rawData.status;
+        const statusCode = results.statusCode || rawData.statusCode || rawData.status;
         const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
 
         if (isSuccess) {
@@ -172,7 +168,8 @@ app.post('/api/payment-callback', async (req, res) => {
             });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            const msg = results.message || "Declined";
+            // Updated to check top-level message first
+            const msg = rawData.message || results.message || "Declined/Cancelled";
             console.log(`❌ [LOG] CANCELLED: Order ${orderId}. Message: ${msg}`);
             await orderRef.update({ 
                 status: 'CANCELLED', 
@@ -193,7 +190,12 @@ app.get('/api/order-status/:orderId', async (req, res) => {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
         if (!orderDoc.exists) return res.status(404).json({ success: false, message: 'Order not found' });
         const data = orderDoc.data();
-        res.status(200).json({ success: true, orderId: req.params.orderId, status: data.status || 'PENDING' });
+        res.status(200).json({ 
+            success: true, 
+            orderId: req.params.orderId, 
+            status: data.status || 'PENDING',
+            cancelReason: data.cancelReason || null 
+        });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -214,11 +216,14 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 <body style="background:#000; color:#fff; text-align:center; font-family:Arial; padding:50px;">
                     <div style="border:2px solid ${meta.accent}; padding:30px;">
                         <h1 style="color:${meta.accent};">SARAMI EVENTS</h1>
+                        <hr style="border-color:${meta.accent}">
                         <h2>${meta.name}</h2>
-                        <h3>Attendee: ${data.payerName}</h3>
-                        <p>Status: ${data.status}</p>
-                        <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode">
-                        <p>Ticket ID: ${req.params.orderId}</p>
+                        <h3>Guest: ${data.payerName}</h3>
+                        <p>Venue: ${meta.venue}</p>
+                        <p>Date: ${meta.date}</p>
+                        <p>Status: <strong>${data.status}</strong></p>
+                        <img src="https://barcode.tec-it.com/barcode.ashx?data=${req.params.orderId}&code=QRCode" style="margin:20px 0;">
+                        <p style="font-size:10px;">ID: ${req.params.orderId}</p>
                     </div>
                 </body>
             </html>`);
@@ -233,4 +238,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11.9 - ONLINE on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V12.0 - ONLINE on port ${PORT}`));
