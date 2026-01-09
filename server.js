@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.1 (STABLE WITH LOGS)
-// FEATURES: Premium Eldoret Theme, Enhanced Itinerary, Full Process Logging
+// SARAMI EVENTS TICKETING BACKEND - V15.2 (STABLE + PRICE FIX)
+// FEATURES: Price Fix, Premium Eldoret Theme, Full Process Logging
 // ==========================================
 
 const express = require('express');
@@ -65,9 +65,9 @@ function getEventDetails(eventId, packageTier) {
             bg: "#120202",
             accent: "#D4AF37", 
             packages: { 
-                'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins…" }, 
-                'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." }, 
-                'SUNRISE': { name: "Sunrise Lakeside Whisper", price: "14,000", quote: "A gentle escape where love speaks softly." } 
+                'ETERNAL': { name: "Eternal Lakeside Embrace" }, 
+                'MOONLIT': { name: "Moonlit Lakeside Spark" }, 
+                'SUNRISE': { name: "Sunrise Lakeside Whisper" } 
             } 
         },
         'ELDORET': { 
@@ -77,8 +77,8 @@ function getEventDetails(eventId, packageTier) {
             bg: "#002b25",
             accent: "#E2C275", 
             packages: { 
-                'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." }, 
-                'SPARK': { name: "Sunset Spark", price: "7,000", quote: "Simple, sweet, and unforgettable." } 
+                'FLAME': { name: "Eternal Flame Dinner" }, 
+                'SPARK': { name: "Sunset Spark" } 
             } 
         },
         'NAIROBI': { 
@@ -88,19 +88,19 @@ function getEventDetails(eventId, packageTier) {
             bg: "#1a0033",
             accent: "#D4AF37", 
             packages: { 
-                'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." } 
+                'CITYGLOW': { name: "City Glow Romance" } 
             } 
         }
     };
     const event = eventMap[eventId] || eventMap['NAIROBI'];
     const pKey = packageTier.toUpperCase();
-    const pkg = event.packages[pKey] || { name: "Luxury Entry", price: "Varies", quote: "A perfect night of love." };
+    const pkg = event.packages[pKey] || { name: "Luxury Entry" };
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
 
 // --- 3. LUXURY EMAIL FUNCTION (WITH LOGS) ---
 async function sendTicketEmail(orderData, orderId) {
-    console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} (${orderData.payerEmail})`);
+    console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} to ${orderData.payerEmail}`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
         await apiInstance.sendTransacEmail({
@@ -118,7 +118,6 @@ async function sendTicketEmail(orderData, orderId) {
                             DOWNLOAD DIGITAL TICKET
                         </a>
                     </div>
-                    <p style="font-size: 16px; color: ${meta.color}; font-style: italic; margin-top: 30px;">"${meta.quote}"</p>
                 </div>`
         });
         console.log(`✅ [LOG] Email successfully delivered to ${orderData.payerEmail}`);
@@ -130,7 +129,7 @@ async function sendTicketEmail(orderData, orderId) {
 // --- 4. MAIN BOOKING ROUTE (WITH LOGS) ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
-    console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Event: ${eventId} | Package: ${packageTier}`);
+    console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Amount: ${amount} | Event: ${eventId}`);
     
     try {
         const orderRef = await db.collection('orders').add({
@@ -140,7 +139,7 @@ app.post('/api/create-order', async (req, res) => {
         });
 
         if (PAYMENT_BYPASS_MODE) {
-            console.log(`⚠️ [LOG] BYPASS MODE ACTIVE: Auto-approving Order ${orderRef.id}`);
+            console.log(`⚠️ [LOG] BYPASS ACTIVE: Auto-approving Order ${orderRef.id}`);
             await orderRef.update({ 
                 status: 'PAID', 
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -170,11 +169,7 @@ app.post('/api/create-order', async (req, res) => {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        await orderRef.update({ 
-            merchantRequestID: merchantTxId, 
-            gatewayRawId: stkRes.data.transactionId || '' 
-        });
-
+        await orderRef.update({ merchantRequestID: merchantTxId, gatewayRawId: stkRes.data.transactionId || '' });
         console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
@@ -186,15 +181,14 @@ app.post('/api/create-order', async (req, res) => {
 // --- 5. CALLBACK ROUTE (WITH LOGS) ---
 app.post('/api/payment-callback', async (req, res) => {
     let rawData = req.body;
-    console.log("📥 [LOG] Callback received from Payment Gateway");
-    
+    console.log("📥 [LOG] Payment Callback Received");
     const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
     const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
     
     try {
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback Error: No order found for MerchantRef: ${mReqId}`);
+            console.error(`⚠️ [LOG] Callback No Order Found for: ${mReqId}`);
             return res.sendStatus(200);
         }
 
@@ -205,30 +199,30 @@ app.post('/api/payment-callback', async (req, res) => {
         const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
 
         if (isSuccess) {
-            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId} marked as PAID.`);
+            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId}`);
             await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            const msg = rawData.message || results.message || "Declined/Cancelled";
-            console.log(`❌ [LOG] PAYMENT FAILED: Order ${orderId}. Reason: ${msg}`);
-            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp(), cancelReason: msg });
+            console.log(`❌ [LOG] PAYMENT FAILED: Order ${orderId}`);
+            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
-    } catch (e) { 
-        console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message); 
-    }
+    } catch (e) { console.error("❌ [LOG] CALLBACK ERROR:", e.message); }
     res.sendStatus(200);
 });
 
-// --- 6. LUXURY PDF GENERATION ---
+// --- 6. LUXURY PDF GENERATION (PRICE FIX APPLIED) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
-    console.log(`🖨️ [LOG] Generating PDF Ticket for Order: ${req.params.orderId}`);
+    console.log(`🖨️ [LOG] PDF Request for Order: ${req.params.orderId}`);
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
         if (!orderDoc.exists) throw new Error("Order not found");
         
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
+        
+        // FIX: Use the actual paid amount from the database
+        const displayPrice = data.amount.toLocaleString(); 
 
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
@@ -241,12 +235,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 <style>
                     body { margin: 0; padding: 0; background: #000; }
                     .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; background: ${meta.bg}; }
-                    .border-frame { 
-                        position: absolute; inset: 12mm; 
-                        border: 1px solid ${meta.accent}; 
-                        background: linear-gradient(145deg, ${meta.bg}, #000); 
-                        z-index: 2; display: flex; flex-direction: column; border-radius: 4px;
-                    }
+                    .border-frame { position: absolute; inset: 12mm; border: 1px solid ${meta.accent}; background: linear-gradient(145deg, ${meta.bg}, #000); z-index: 2; display: flex; flex-direction: column; border-radius: 4px; }
                     .corner { position: absolute; width: 40px; height: 40px; border: 3px solid ${meta.accent}; z-index: 5; }
                     .tl { top: -5px; left: -5px; border-right: 0; border-bottom: 0; }
                     .tr { top: -5px; right: -5px; border-left: 0; border-bottom: 0; }
@@ -297,7 +286,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                                 </div>
                             </div>
                             <div style="margin-top: 40px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff; letter-spacing: 2px;">
-                                KES ${meta.price} <span style="font-size: 12px; color: ${meta.accent}; margin-left: 10px;">[ CONFIRMED ]</span>
+                                KES ${displayPrice} <span style="font-size: 12px; color: ${meta.accent}; margin-left: 10px;">[ CONFIRMED ]</span>
                             </div>
                             <div class="qr-container">
                                 <img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode">
@@ -319,12 +308,12 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
             </body>
             </html>`);
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
-        console.log(`✅ [LOG] PDF generated and sent for Order: ${req.params.orderId}`);
+        console.log(`✅ [LOG] PDF Generated for ${data.payerName}`);
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
     } catch (e) { 
-        console.error("❌ [LOG] PDF GENERATION ERROR:", e.message);
+        console.error("❌ [LOG] PDF ERROR:", e.message);
         res.status(500).send(e.message); 
     } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.1 - SYSTEM ONLINE & LOGGING`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.2 - PROCESS MONITORING ACTIVE`));
