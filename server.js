@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.3 (STABLE & LOGGING)
-// UPDATED: Refined Callback for User Cancellations & ID Mapping
+// SARAMI EVENTS TICKETING BACKEND - V15.4 (STABLE & MULTI-PARSER)
+// UPDATED: Robust Callback Handling for JSON & Form-Encoded Payloads
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -9,8 +9,10 @@ const puppeteer = require('puppeteer');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+
 // --- BYPASS SETTING ---
 const PAYMENT_BYPASS_MODE = false;
+
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
 try {
@@ -23,23 +25,29 @@ try {
 } catch (error) {
     console.error("❌ Firebase Error:", error.message);
 }
+
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+
 const app = express();
+
+// --- MIDDLEWARE CONFIGURATION ---
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-// Removed: app.use(express.text({ type: '*/*' })); // This was causing issues with JSON parsing in callbacks
+app.use(express.json()); // For normal API routes
+app.use(express.urlencoded({ extended: true })); // Important for standard form data
+
 const PORT = process.env.PORT || 10000;
+
 // --- 2. HELPERS & EVENT DATA ---
 function formatPhone(phone) {
     let p = phone.replace(/\D/g, '');
     if (p.startsWith('0')) p = '254' + p.slice(1);
     return p.startsWith('254') ? p : '254' + p;
 }
+
 async function getAuthToken() {
     const authRes = await axios.post('https://moja.dtbafrica.com/api/infinitiPay/v2/users/partner/login', {
         username: process.env.INFINITIPAY_MERCHANT_USERNAME,
@@ -47,6 +55,7 @@ async function getAuthToken() {
     });
     return authRes.data.access_token;
 }
+
 function getEventDetails(eventId, packageTier) {
     const eventMap = {
         'NAIVASHA': {
@@ -88,6 +97,7 @@ function getEventDetails(eventId, packageTier) {
     const pkg = event.packages[pKey] || { name: "Luxury Entry", price: "Varies", quote: "A perfect night of love." };
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
+
 // --- 3. LUXURY EMAIL FUNCTION ---
 async function sendTicketEmail(orderData, orderId) {
     console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} (${orderData.payerEmail})`);
@@ -116,6 +126,7 @@ async function sendTicketEmail(orderData, orderId) {
         console.error("❌ [LOG] EMAIL ERROR:", err.message);
     }
 }
+
 // --- 4. MAIN BOOKING ROUTE ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
@@ -127,6 +138,7 @@ app.post('/api/create-order', async (req, res) => {
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
+
         if (PAYMENT_BYPASS_MODE) {
             console.log(`⚠️ [LOG] BYPASS MODE ACTIVE: Auto-approving Order ${orderRef.id}`);
             await orderRef.update({
@@ -137,8 +149,10 @@ app.post('/api/create-order', async (req, res) => {
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
         }
+
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
+        
         const payload = {
             transactionId: merchantTxId,
             transactionReference: orderRef.id,
@@ -151,13 +165,16 @@ app.post('/api/create-order', async (req, res) => {
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
+
         const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+
         await orderRef.update({
             merchantRequestID: merchantTxId,
             gatewayRawId: stkRes.data.transactionId || ''
         });
+
         console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
@@ -165,36 +182,55 @@ app.post('/api/create-order', async (req, res) => {
         res.status(500).json({ success: false, debug: err.message });
     }
 });
-// --- 5. CALLBACK ROUTE (FIXED FOR RAW JSON BODY) ---
-app.post('/api/payment-callback', express.raw({ type: 'application/json' }), async (req, res) => {
+
+// --- 5. CALLBACK ROUTE (HANDLES BOTH JSON & FORM-ENCODED) ---
+app.post('/api/payment-callback', express.raw({ type: '*/*' }), async (req, res) => {
     console.log("📥 [LOG] Callback received from Payment Gateway");
 
-    let rawBody = req.body.toString('utf8'); // Convert buffer to string
-    console.log("📥 [LOG] Raw callback body:", rawBody);
+    const contentType = req.headers['content-type'] || '';
+    let payload = {};
 
-    let payload;
-    try {
-        payload = JSON.parse(rawBody);
-    } catch (err) {
-        console.error("❌ [LOG] Failed to parse callback JSON:", err.message);
-        return res.sendStatus(400);
+    // 1. Parse the body based on Content-Type
+    if (contentType.includes('application/json')) {
+        try {
+            const rawBody = req.body.toString('utf8');
+            console.log("📥 [LOG] Raw JSON body:", rawBody);
+            payload = JSON.parse(rawBody);
+        } catch (err) {
+            console.error("❌ [LOG] Failed to parse JSON callback:", err.message);
+            return res.sendStatus(400);
+        }
+    } else {
+        // Fallback for form-encoded or unknown (common with M-Pesa gateways)
+        const rawBody = req.body.toString('utf8');
+        console.log("📥 [LOG] Raw form/text body:", rawBody);
+        const params = new URLSearchParams(rawBody);
+        for (const [key, value] of params) {
+            try {
+                payload[key] = JSON.parse(value); // Try to parse nested JSON fields like 'results'
+            } catch {
+                payload[key] = value;
+            }
+        }
     }
 
-    // Now safely extract from parsed payload
-    const results = payload.results || {};
-    
-    // Handle both possible key names (case-sensitive!)
-    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.merchantTxId || payload.transactionId;
+    // 2. Extract Data with multiple fallback keys
+    const results = payload.results || payload.Result || {};
+    const mReqId = results.merchantTxnId || 
+                   results.MerchantRequestID || 
+                   results.merchantTxId || 
+                   payload.merchantTxnId || 
+                   payload.transactionId;
 
-    const statusCode = payload.statusCode || results.statusCode;
-    const message = payload.message || results.message || "Unknown status";
+    const statusCode = payload.statusCode || results.statusCode || payload.ResultCode;
+    const message = payload.message || results.message || payload.ResultDesc || "Unknown";
 
     if (!mReqId) {
-        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID not found in body.", JSON.stringify(payload));
+        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID not found", JSON.stringify(payload));
         return res.status(400).send("Merchant ID Missing");
     }
 
-    console.log(`🔍 [LOG] Found Merchant Request ID: ${mReqId}`);
+    console.log(`🔍 [LOG] Extracted MerchantRef: ${mReqId} | Status: ${statusCode} | Msg: ${message}`);
 
     try {
         const querySnapshot = await db.collection('orders')
@@ -204,20 +240,20 @@ app.post('/api/payment-callback', express.raw({ type: 'application/json' }), asy
 
         if (querySnapshot.empty) {
             console.error(`⚠️ [LOG] No order found for MerchantRef: ${mReqId}`);
-            return res.sendStatus(200); // Still ACK to gateway
+            return res.sendStatus(200);
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
         const orderRef = db.collection('orders').doc(orderId);
 
-        const isSuccess = (statusCode == 200 || statusCode == 0 || statusCode === "0" || statusCode === "200");
+        const isSuccess = (statusCode == 0 || statusCode == "0" || statusCode === 200 || statusCode === "200");
 
         if (isSuccess) {
             console.log(`💰 [LOG] PAYMENT SUCCESS for Order ${orderId}`);
             await orderRef.update({
                 status: 'PAID',
-                gatewayResponse: payload, // Optional: store full response for debugging
+                gatewayResponse: payload,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
             await sendTicketEmail(orderDoc.data(), orderId);
@@ -234,9 +270,9 @@ app.post('/api/payment-callback', express.raw({ type: 'application/json' }), asy
         console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message);
     }
 
-    // Always respond 200 to prevent gateway retries
-    res.sendStatus(200);
+    res.sendStatus(200); // Always ACK to gateway
 });
+
 // --- 6. LUXURY PDF GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
@@ -244,7 +280,7 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
         if (!orderDoc.exists) throw new Error("Order not found");
-       
+        
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
@@ -342,4 +378,5 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         res.status(500).send(e.message);
     } finally { if (browser) await browser.close(); }
 });
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.3 - SYSTEM ONLINE & LOGGING`));
+
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.4 - SYSTEM ONLINE & LOGGING`));
