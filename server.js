@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.2 (STABLE + PRICE FIX)
-// FEATURES: Price Fix, Premium Eldoret Theme, Full Process Logging
+// SARAMI EVENTS TICKETING BACKEND - V15.3 (FINAL STABLE)
+// FEATURES: Firestore Query Fix, Pricing Safeguard, Premium Design
 // ==========================================
 
 const express = require('express');
@@ -22,6 +22,8 @@ try {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
     db = admin.firestore();
+    // CRITICAL FIX: Ignore undefined values to prevent Firestore crashes
+    db.settings({ ignoreUndefinedProperties: true });
     console.log("✅ [SYSTEM] Firebase Initialized Successfully");
 } catch (error) {
     console.error("❌ Firebase Error:", error.message);
@@ -98,9 +100,9 @@ function getEventDetails(eventId, packageTier) {
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
 
-// --- 3. LUXURY EMAIL FUNCTION (WITH LOGS) ---
+// --- 3. EMAIL FUNCTION (LOGS INCLUDED) ---
 async function sendTicketEmail(orderData, orderId) {
-    console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} to ${orderData.payerEmail}`);
+    console.log(`📩 [LOG] Emailing Order: ${orderId}`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
         await apiInstance.sendTransacEmail({
@@ -110,26 +112,26 @@ async function sendTicketEmail(orderData, orderId) {
             htmlContent: `
                 <div style="background-color: #ffffff; padding: 40px; border: 4px solid ${meta.accent}; font-family: 'Georgia', serif; text-align: center; max-width: 600px; margin: auto;">
                     <div style="color: ${meta.color}; font-size: 30px; margin-bottom: 20px;">❤️</div>
-                    <h1 style="color: ${meta.color}; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; margin-bottom: 20px;">RESERVATION CONFIRMED</h1>
+                    <h1 style="color: ${meta.color}; text-transform: uppercase; font-size: 24px; margin-bottom: 20px;">RESERVATION CONFIRMED</h1>
                     <p style="font-size: 18px; color: #333;">Dear <strong>${orderData.payerName}</strong>, your seat at <strong>${meta.venue}</strong> is reserved.</p>
                     <div style="margin: 30px 0;">
                         <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                           style="background-color: ${meta.color}; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 14px; text-transform: uppercase; display: inline-block;">
+                           style="background-color: ${meta.color}; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; display: inline-block;">
                             DOWNLOAD DIGITAL TICKET
                         </a>
                     </div>
                 </div>`
         });
-        console.log(`✅ [LOG] Email successfully delivered to ${orderData.payerEmail}`);
+        console.log(`✅ [LOG] Email delivered to ${orderData.payerEmail}`);
     } catch (err) {
         console.error("❌ [LOG] EMAIL ERROR:", err.message);
     }
 }
 
-// --- 4. MAIN BOOKING ROUTE (WITH LOGS) ---
+// --- 4. MAIN BOOKING ROUTE (LOGS INCLUDED) ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
-    console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Amount: ${amount} | Event: ${eventId}`);
+    console.log(`🚀 [LOG] INITIATING: ${payerName} | Amount: ${amount}`);
     
     try {
         const orderRef = await db.collection('orders').add({
@@ -139,12 +141,7 @@ app.post('/api/create-order', async (req, res) => {
         });
 
         if (PAYMENT_BYPASS_MODE) {
-            console.log(`⚠️ [LOG] BYPASS ACTIVE: Auto-approving Order ${orderRef.id}`);
-            await orderRef.update({ 
-                status: 'PAID', 
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                bypass: true 
-            });
+            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp(), bypass: true });
             await sendTicketEmail(req.body, orderRef.id);
             return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
         }
@@ -169,8 +166,8 @@ app.post('/api/create-order', async (req, res) => {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        await orderRef.update({ merchantRequestID: merchantTxId, gatewayRawId: stkRes.data.transactionId || '' });
-        console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
+        await orderRef.update({ merchantRequestID: merchantTxId });
+        console.log(`📲 [LOG] STK Push sent to ${payerPhone}`);
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
         console.error("❌ [LOG] CREATE ORDER ERROR:", err.message);
@@ -178,42 +175,47 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. CALLBACK ROUTE (WITH LOGS) ---
+// --- 5. CALLBACK ROUTE (FIXED WITH LOGS) ---
 app.post('/api/payment-callback', async (req, res) => {
+    console.log("📥 [LOG] Callback Received");
     let rawData = req.body;
-    console.log("📥 [LOG] Payment Callback Received");
     const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
     const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
     
+    // CRITICAL FIX: Stop if mReqId is undefined
+    if (!mReqId) {
+        console.error("❌ [LOG] CALLBACK ERROR: Merchant ID is missing from provider response.");
+        return res.sendStatus(200);
+    }
+
     try {
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
         if (querySnapshot.empty) {
-            console.error(`⚠️ [LOG] Callback No Order Found for: ${mReqId}`);
+            console.error(`⚠️ [LOG] Callback: Order not found for ID ${mReqId}`);
             return res.sendStatus(200);
         }
 
         const orderDoc = querySnapshot.docs[0];
         const orderId = orderDoc.id;
-        const orderRef = db.collection('orders').doc(orderId);
         const statusCode = results.statusCode || rawData.statusCode || rawData.status;
         const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
 
         if (isSuccess) {
             console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId}`);
-            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            await db.collection('orders').doc(orderId).update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
             await sendTicketEmail(orderDoc.data(), orderId);
         } else {
             console.log(`❌ [LOG] PAYMENT FAILED: Order ${orderId}`);
-            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            await db.collection('orders').doc(orderId).update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
-    } catch (e) { console.error("❌ [LOG] CALLBACK ERROR:", e.message); }
+    } catch (e) { console.error("❌ [LOG] CALLBACK CRASH PREVENTED:", e.message); }
     res.sendStatus(200);
 });
 
-// --- 6. LUXURY PDF GENERATION (PRICE FIX APPLIED) ---
+// --- 6. LUXURY PDF GENERATION (FIXED PRICE & LOGS) ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
-    console.log(`🖨️ [LOG] PDF Request for Order: ${req.params.orderId}`);
+    console.log(`🖨️ [LOG] Generating PDF for ${req.params.orderId}`);
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
         if (!orderDoc.exists) throw new Error("Order not found");
@@ -221,8 +223,9 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
         
-        // FIX: Use the actual paid amount from the database
-        const displayPrice = data.amount.toLocaleString(); 
+        // SAFE PRICING: Priority order -> Database amount
+        const rawAmount = data.amount || (req.query.amount ? Number(req.query.amount) : null);
+        const displayPrice = rawAmount ? rawAmount.toLocaleString() : "Contact Support";
 
         browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
@@ -243,24 +246,21 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                     .content { padding: 30px 60px; flex: 1; color: white; position: relative; }
                     .venue-title { font-family: 'Playfair Display'; font-size: 34px; color: ${meta.accent}; margin-bottom: 5px; }
                     .history-sub { font-family: 'Montserrat'; color: #aaa; text-transform: uppercase; font-size: 10px; letter-spacing: 2px; }
-                    .guest-section { margin-top: 35px; position: relative; }
-                    .label { font-family: 'Montserrat'; color: ${meta.accent}; font-size: 9px; letter-spacing: 3px; margin-bottom: 8px; font-weight: 700; }
-                    .guest-name { font-family: 'Playfair Display'; font-size: 42px; color: #fff; line-height: 1; margin-bottom: 25px; font-style: italic; }
-                    .info-grid { display: flex; gap: 50px; margin-top: 20px; }
+                    .guest-name { font-family: 'Playfair Display'; font-size: 42px; color: #fff; line-height: 1; margin: 35px 0 25px 0; font-style: italic; }
+                    .info-grid { display: flex; gap: 50px; }
                     .info-item { border-left: 2px solid ${meta.accent}; padding-left: 15px; }
+                    .label { font-family: 'Montserrat'; color: ${meta.accent}; font-size: 9px; letter-spacing: 2px; font-weight: 700; }
                     .info-val { font-family: 'Montserrat'; font-weight: 700; font-size: 16px; color: #eee; text-transform: uppercase; }
                     .qr-container { position: absolute; bottom: 40px; right: 60px; text-align: center; }
                     .qr-img { width: 120px; height: 120px; background: white; padding: 10px; border-radius: 2px; border: 3px solid ${meta.accent}; }
-                    .itinerary-container { padding: 40px 80px; }
-                    .itin-title { text-align: center; font-family: 'Playfair Display'; font-size: 32px; font-style: italic; color: ${meta.accent}; margin-bottom: 40px; }
+                    .itin-container { padding: 40px 80px; }
                     .itin-row { display: flex; align-items: flex-start; margin-bottom: 30px; }
                     .itin-time { width: 80px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff; }
                     .itin-divider { width: 2px; height: 45px; background: rgba(255,255,255,0.3); margin: 0 25px; }
                     .itin-divider.active { background: ${meta.accent}; width: 3px; }
                     .itin-details { flex: 1; }
-                    .itin-act { font-family: 'Montserrat'; font-weight: 700; font-size: 22px; color: #fff; margin-bottom: 4px; }
+                    .itin-act { font-family: 'Montserrat'; font-weight: 700; font-size: 22px; color: #fff; }
                     .itin-desc { font-family: 'Montserrat'; font-size: 13px; color: #888; }
-                    .itin-footer { text-align: center; margin-top: 40px; font-family: 'Playfair Display'; color: ${meta.accent}; font-size: 24px; font-style: italic; }
                 </style>
             </head>
             <body>
@@ -271,37 +271,27 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         <div class="content">
                             <div class="venue-title">${meta.venue}</div>
                             <div class="history-sub">${meta.history}</div>
-                            <div class="guest-section">
-                                <div class="label">INVITATION FOR</div>
-                                <div class="guest-name">${data.payerName}</div>
-                            </div>
+                            <div class="label" style="margin-top:30px">INVITATION FOR</div>
+                            <div class="guest-name">${data.payerName}</div>
                             <div class="info-grid">
-                                <div class="info-item">
-                                    <div class="label">DATE</div>
-                                    <div class="info-val">${meta.date}</div>
-                                </div>
-                                <div class="info-item">
-                                    <div class="label">TIER</div>
-                                    <div class="info-val" style="color: ${meta.accent}">${meta.name}</div>
-                                </div>
+                                <div class="info-item"><div class="label">DATE</div><div class="info-val">${meta.date}</div></div>
+                                <div class="info-item"><div class="label">TIER</div><div class="info-val" style="color:${meta.accent}">${meta.name}</div></div>
                             </div>
-                            <div style="margin-top: 40px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff; letter-spacing: 2px;">
+                            <div style="margin-top: 40px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff;">
                                 KES ${displayPrice} <span style="font-size: 12px; color: ${meta.accent}; margin-left: 10px;">[ CONFIRMED ]</span>
                             </div>
-                            <div class="qr-container">
-                                <img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode">
-                            </div>
+                            <div class="qr-container"><img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode"></div>
                         </div>
                     </div>
                 </div>
                 <div class="page">
                     <div class="border-frame">
-                        <div class="itinerary-container">
-                            <div class="itin-title">The Evening Itinerary</div>
+                        <div class="itin-container">
+                            <div style="text-align: center; font-family: 'Playfair Display'; font-size: 32px; font-style: italic; color: ${meta.accent}; margin-bottom: 40px;">The Evening Itinerary</div>
                             <div class="itin-row"><div class="itin-time">18:30</div><div class="itin-divider"></div><div class="itin-details"><div class="itin-act">Welcoming Cocktails</div><div class="itin-desc">Chilled signature cocktails upon arrival.</div></div></div>
-                            <div class="itin-row"><div class="itin-time">19:00</div><div class="itin-divider active"></div><div class="itin-details"><div class="itin-act" style="color: ${meta.accent}">Couples Games & Karaoke</div><div class="itin-desc">An hour of laughter, bonding, and melody.</div></div></div>
+                            <div class="itin-row"><div class="itin-time">19:00</div><div class="itin-divider active"></div><div class="itin-details"><div class="itin-act" style="color:${meta.accent}">Couples Games & Karaoke</div><div class="itin-desc">An hour of laughter, bonding, and melody.</div></div></div>
                             <div class="itin-row"><div class="itin-time">20:00</div><div class="itin-divider"></div><div class="itin-details"><div class="itin-act">3-Course Gourmet Banquet</div><div class="itin-desc">Curated culinary excellence for two.</div></div></div>
-                            <div class="itin-footer">"Happy Valentine's to you and yours."</div>
+                            <div style="text-align: center; margin-top: 40px; font-family: 'Playfair Display'; color: ${meta.accent}; font-size: 24px;">"Happy Valentine's to you and yours."</div>
                         </div>
                     </div>
                 </div>
@@ -316,4 +306,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.2 - PROCESS MONITORING ACTIVE`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.3 - STABLE MONITORING ACTIVE`));
