@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V11.5
-// MASTER: FINAL LUXURY DESIGN + EXACT ITINERARY
+// SARAMI EVENTS TICKETING BACKEND - V15.1 (STABLE WITH LOGS)
+// FEATURES: Premium Eldoret Theme, Enhanced Itinerary, Full Process Logging
 // ==========================================
 
 const express = require('express');
@@ -11,7 +11,8 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const BYPASS_PAYMENT = false; 
+// --- BYPASS SETTING ---
+const PAYMENT_BYPASS_MODE = false; 
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
@@ -22,7 +23,9 @@ try {
     }
     db = admin.firestore();
     console.log("✅ [SYSTEM] Firebase Initialized Successfully");
-} catch (error) { console.error("❌ Firebase Error:", error.message); }
+} catch (error) {
+    console.error("❌ Firebase Error:", error.message);
+}
 
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
@@ -33,14 +36,16 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 10000;
 
-// --- 2. HELPERS & ACCURATE LUXURY DATA ---
+// --- 2. HELPERS & EVENT DATA ---
 function formatPhone(phone) {
-    let p = phone.replace(/\D/g, ''); 
+    let p = phone.replace(/\D/g, '');
     if (p.startsWith('0')) p = '254' + p.slice(1);
-    return p.startsWith('254') ? p : '254' + p; 
+    return p.startsWith('254') ? p : '254' + p;
 }
 
 async function getAuthToken() {
@@ -53,48 +58,49 @@ async function getAuthToken() {
 
 function getEventDetails(eventId, packageTier) {
     const eventMap = {
-        'NAIVASHA': {
-            venue: "Elsamere Resort, Naivasha",
+        'NAIVASHA': { 
+            venue: "Elsamere Resort, Naivasha", 
             history: "Former home of Joy & George Adamson (Born Free)",
             color: "#6b0f0f", 
+            bg: "#120202",
             accent: "#D4AF37", 
-            packages: {
-                'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins… forever." },
-                'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." },
-                'SUNRISE': { name: "Sunrise Lakeside Whisper", price: "14,000", quote: "A gentle escape where love speaks softly." }
-            }
+            packages: { 
+                'ETERNAL': { name: "Eternal Lakeside Embrace", price: "32,000", quote: "Where time stops and love begins…" }, 
+                'MOONLIT': { name: "Moonlit Lakeside Spark", price: "18,000", quote: "A night where every glance feels like forever." }, 
+                'SUNRISE': { name: "Sunrise Lakeside Whisper", price: "14,000", quote: "A gentle escape where love speaks softly." } 
+            } 
         },
-        'ELDORET': {
-            venue: "Marura Gardens, Eldoret",
+        'ELDORET': { 
+            venue: "Marura Gardens, Eldoret", 
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#006064", // Retained: Luxury Teal
-            accent: "#D4AF37",
-            packages: {
-                'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
-                'SPARK': { name: "Sunset Spark", price: "7,000", quote: "Simple, sweet, and unforgettable." }
-            }
+            color: "#004d40", 
+            bg: "#002b25",
+            accent: "#E2C275", 
+            packages: { 
+                'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." }, 
+                'SPARK': { name: "Sunset Spark", price: "7,000", quote: "Simple, sweet, and unforgettable." } 
+            } 
         },
-        'NAIROBI': {
-            venue: "Sagret Gardens, Nairobi",
+        'NAIROBI': { 
+            venue: "Sagret Gardens, Nairobi", 
             history: "An Enchanted Garden Oasis in the Heart of the City",
             color: "#4b0082", 
-            accent: "#D4AF37",
-            packages: {
-                'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." }
-            }
+            bg: "#1a0033",
+            accent: "#D4AF37", 
+            packages: { 
+                'CITYGLOW': { name: "City Glow Romance", price: "9,000", quote: "City lights, your love, one perfect night." } 
+            } 
         }
     };
-    
     const event = eventMap[eventId] || eventMap['NAIROBI'];
     const pKey = packageTier.toUpperCase();
     const pkg = event.packages[pKey] || { name: "Luxury Entry", price: "Varies", quote: "A perfect night of love." };
-
     return { ...event, ...pkg, date: "February 14, 2026" };
 }
 
-// --- 3. LUXURY EMAIL FUNCTION ---
+// --- 3. LUXURY EMAIL FUNCTION (WITH LOGS) ---
 async function sendTicketEmail(orderData, orderId) {
-    console.log(`📩 [LOG] Step 3: Dispatching Confirmation Email for Order: ${orderId}`);
+    console.log(`📩 [LOG] Dispatching Confirmation Email for Order: ${orderId} (${orderData.payerEmail})`);
     const meta = getEventDetails(orderData.eventId, orderData.packageTier);
     try {
         await apiInstance.sendTransacEmail({
@@ -102,232 +108,223 @@ async function sendTicketEmail(orderData, orderId) {
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `🎫 Your VIP Invitation: ${meta.name}`,
             htmlContent: `
-                <div style="padding:40px; background:#fafafa; border:4px solid ${meta.accent}; font-family:serif; text-align:center;">
-                    <h1 style="color:${meta.color}; text-transform:uppercase;">Reservation Confirmed</h1>
-                    <p style="font-size:18px;">Dear ${orderData.payerName}, your seat at <strong>${meta.venue}</strong> is reserved.</p>
-                    <div style="margin:40px 0;">
+                <div style="background-color: #ffffff; padding: 40px; border: 4px solid ${meta.accent}; font-family: 'Georgia', serif; text-align: center; max-width: 600px; margin: auto;">
+                    <div style="color: ${meta.color}; font-size: 30px; margin-bottom: 20px;">❤️</div>
+                    <h1 style="color: ${meta.color}; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; margin-bottom: 20px;">RESERVATION CONFIRMED</h1>
+                    <p style="font-size: 18px; color: #333;">Dear <strong>${orderData.payerName}</strong>, your seat at <strong>${meta.venue}</strong> is reserved.</p>
+                    <div style="margin: 30px 0;">
                         <a href="https://ticketing-app-final.onrender.com/api/get-ticket-pdf/${orderId}" 
-                           style="background:${meta.color}; color:#fff; padding:18px 35px; text-decoration:none; border-radius:50px; font-weight:bold; text-transform:uppercase;">
-                           Download Your Luxury Ticket
+                           style="background-color: ${meta.color}; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 14px; text-transform: uppercase; display: inline-block;">
+                            DOWNLOAD DIGITAL TICKET
                         </a>
                     </div>
+                    <p style="font-size: 16px; color: ${meta.color}; font-style: italic; margin-top: 30px;">"${meta.quote}"</p>
                 </div>`
         });
-        console.log(`✅ [LOG] Step 4: Email successfully delivered to ${orderData.payerEmail}`);
-    } catch (err) { console.error("❌ [EMAIL ERROR]:", err.message); }
+        console.log(`✅ [LOG] Email successfully delivered to ${orderData.payerEmail}`);
+    } catch (err) {
+        console.error("❌ [LOG] EMAIL ERROR:", err.message);
+    }
 }
 
-// --- 4. MAIN BOOKING ROUTE ---
+// --- 4. MAIN BOOKING ROUTE (WITH LOGS) ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
-    console.log(`🚀 [LOG] Step 1: Processing new booking for ${payerName} - Package: ${packageTier}`);
+    console.log(`🚀 [LOG] NEW BOOKING INITIATED: ${payerName} | Event: ${eventId} | Package: ${packageTier}`);
     
-    let orderRef;
     try {
-        orderRef = await db.collection('orders').add({
+        const orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName, status: 'INITIATED',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-        console.log(`💾 [LOG] Step 2: Firestore Document Created [ID: ${orderRef.id}]`);
 
-        if (BYPASS_PAYMENT) {
-            console.log(`⏩ [LOG] BYPASS ACTIVE: Instantly confirming order ${orderRef.id}`);
-            await orderRef.update({ status: 'PAID' });
+        if (PAYMENT_BYPASS_MODE) {
+            console.log(`⚠️ [LOG] BYPASS MODE ACTIVE: Auto-approving Order ${orderRef.id}`);
+            await orderRef.update({ 
+                status: 'PAID', 
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                bypass: true 
+            });
             await sendTicketEmail(req.body, orderRef.id);
-            return res.status(200).json({ success: true, orderId: orderRef.id });
-        } else {
-            const token = await getAuthToken();
-            const randomId = crypto.randomBytes(8).toString('hex');
-            const payload = {
-                transactionId: `TXN-${randomId}`,
-                transactionReference: orderRef.id,
-                amount: Number(amount),
-                merchantId: "139", 
-                transactionTypeId: 1, 
-                payerAccount: formatPhone(payerPhone),
-                narration: `Sarami: ${eventName}`,
-                promptDisplayAccount: "Sarami Events",
-                callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-                ptyId: 1 
-            };
-
-            try {
-                await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, { 
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    timeout: 45000 
-                });
-                console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Waiting for user action...`);
-                return res.status(200).json({ success: true, orderId: orderRef.id });
-            } catch (payErr) {
-                console.log(`❌ [LOG] CANCELLED: User closed the prompt or request failed for ${payerName}`);
-                await orderRef.update({ status: 'CANCELLED' });
-                return res.status(200).json({ success: true, orderId: orderRef.id, message: "Cancelled" });
-            }
+            return res.status(200).json({ success: true, orderId: orderRef.id, bypassed: true });
         }
-    } catch (err) { 
-        console.error(`❌ [ORDER ERROR]: ${err.message}`);
-        res.status(500).json({ success: false, debug: err.message }); 
+
+        const token = await getAuthToken();
+        const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
+
+        const payload = {
+            transactionId: merchantTxId,
+            transactionReference: orderRef.id,
+            amount: Number(amount),
+            merchantId: "139",
+            transactionTypeId: 1,
+            payerAccount: formatPhone(payerPhone),
+            narration: `Sarami: ${eventName}`,
+            promptDisplayAccount: "Sarami Events",
+            callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
+            ptyId: 1
+        };
+
+        const stkRes = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        await orderRef.update({ 
+            merchantRequestID: merchantTxId, 
+            gatewayRawId: stkRes.data.transactionId || '' 
+        });
+
+        console.log(`📲 [LOG] STK Push sent to ${payerPhone}. MerchantRef: ${merchantTxId}`);
+        res.status(200).json({ success: true, orderId: orderRef.id });
+    } catch (err) {
+        console.error("❌ [LOG] CREATE ORDER ERROR:", err.message);
+        res.status(500).json({ success: false, debug: err.message });
     }
 });
 
-// --- 5. UPDATED CALLBACK ROUTE (FIXED ERROR) ---
+// --- 5. CALLBACK ROUTE (WITH LOGS) ---
 app.post('/api/payment-callback', async (req, res) => {
-    // Try to find order ID in multiple possible locations to prevent 'undefined'
-    const orderId = req.body.transactionReference || req.body.merchantReference || req.body.orderId;
-    const status = req.body.status || "";
-
-    console.log(`🔔 [LOG] Received Callback for Order: ${orderId}`);
-
-    if (!orderId) {
-        console.log("⚠️ [LOG] Callback received but Order ID is missing. Skipping update.");
-        return res.sendStatus(200);
-    }
-
+    let rawData = req.body;
+    console.log("📥 [LOG] Callback received from Payment Gateway");
+    
+    const results = rawData.results || (rawData.Body && rawData.Body.stkCallback) || rawData;
+    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.transactionId;
+    
     try {
-        if (status.toUpperCase() === 'SUCCESS') {
-            console.log(`💰 [LOG] PAYMENT VERIFIED for Order: ${orderId}`);
-            const orderDoc = await db.collection('orders').doc(orderId).get();
-            if (orderDoc.exists) {
-                await db.collection('orders').doc(orderId).update({ status: 'PAID' });
-                await sendTicketEmail(orderDoc.data(), orderId);
-            }
-        } else {
-            console.log(`❌ [LOG] USER CANCELLED or PAYMENT FAILED at M-Pesa Prompt for: ${orderId}`);
-            await db.collection('orders').doc(orderId).update({ status: 'CANCELLED_AT_PROMPT' });
+        const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
+        if (querySnapshot.empty) {
+            console.error(`⚠️ [LOG] Callback Error: No order found for MerchantRef: ${mReqId}`);
+            return res.sendStatus(200);
         }
-    } catch (e) {
-        console.error("❌ [CALLBACK ERROR]:", e.message);
+
+        const orderDoc = querySnapshot.docs[0];
+        const orderId = orderDoc.id;
+        const orderRef = db.collection('orders').doc(orderId);
+        const statusCode = results.statusCode || rawData.statusCode || rawData.status;
+        const isSuccess = (statusCode == 200 || statusCode === 'SUCCESS' || results.ResultCode === 0);
+
+        if (isSuccess) {
+            console.log(`💰 [LOG] PAYMENT SUCCESS: Order ${orderId} marked as PAID.`);
+            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            await sendTicketEmail(orderDoc.data(), orderId);
+        } else {
+            const msg = rawData.message || results.message || "Declined/Cancelled";
+            console.log(`❌ [LOG] PAYMENT FAILED: Order ${orderId}. Reason: ${msg}`);
+            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp(), cancelReason: msg });
+        }
+    } catch (e) { 
+        console.error("❌ [LOG] CALLBACK PROCESSING ERROR:", e.message); 
     }
     res.sendStatus(200);
 });
 
-// --- 6. PDF TICKET GENERATION ---
+// --- 6. LUXURY PDF GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
-    console.log(`📄 [LOG] Step 5: Rendering Ticket PDF for Order ${req.params.orderId}`);
     let browser;
+    console.log(`🖨️ [LOG] Generating PDF Ticket for Order: ${req.params.orderId}`);
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) throw new Error("Order not found");
+        
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
-        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        browser = await puppeteer.launch({ args: ['--no-sandbox'] });
         const page = await browser.newPage();
         const qrContent = encodeURIComponent(`VALID: ${data.payerName} | REF: ${req.params.orderId}`);
 
         await page.setContent(`
             <html>
             <head>
-                <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet">
+                <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=Montserrat:wght@300;400;700;900&display=swap" rel="stylesheet">
                 <style>
                     body { margin: 0; padding: 0; background: #000; }
-                    .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; background: #0b0b0b; }
-                    
+                    .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; background: ${meta.bg}; }
                     .border-frame { 
-                        position: absolute; inset: 10mm; 
-                        border: 2px solid ${meta.accent}; 
-                        background: #0f0f0f; z-index: 2; 
-                        display: flex; flex-direction: column; 
-                        border-radius: 20px;
+                        position: absolute; inset: 12mm; 
+                        border: 1px solid ${meta.accent}; 
+                        background: linear-gradient(145deg, ${meta.bg}, #000); 
+                        z-index: 2; display: flex; flex-direction: column; border-radius: 4px;
                     }
-
-                    .header { 
-                        height: 65px; display: flex; align-items: center; justify-content: center; 
-                        color: ${meta.accent}; font-family: 'Playfair Display'; font-style: italic; font-size: 28px;
-                        border-bottom: 1px solid rgba(212, 175, 55, 0.3);
-                        margin: 0 40px;
-                    }
-
-                    .content { padding: 35px 50px; flex: 1; position: relative; color: white; }
-                    
-                    .time-label { font-family: 'Montserrat'; font-weight: 700; font-size: 20px; color: white; width: 100px; }
-                    .info-block { flex: 1; border-left: 2px solid #333; padding-left: 25px; margin-bottom: 30px; }
-                    .itinerary-title { font-family: 'Montserrat'; font-weight: 700; font-size: 22px; color: white; margin-bottom: 5px; }
-                    .itinerary-desc { font-family: 'Montserrat'; font-size: 14px; color: #999; }
-
-                    .venue-title { font-family: 'Playfair Display'; font-size: 32px; color: ${meta.accent}; margin-bottom: 5px; }
-                    .guest-name { font-family: 'Playfair Display'; font-size: 38px; color: white; margin: 10px 0; }
-
-                    .pricing-badge {
-                        display: inline-block; padding: 12px 30px; border-radius: 50px;
-                        background: ${meta.color}; border: 1px solid ${meta.accent};
-                        font-family: 'Montserrat'; font-weight: 700; font-size: 18px;
-                    }
-
-                    .qr-container { position: absolute; bottom: 35px; right: 50px; text-align: center; }
-                    .qr-img { width: 150px; height: 150px; background: white; padding: 8px; border-radius: 10px; }
+                    .corner { position: absolute; width: 40px; height: 40px; border: 3px solid ${meta.accent}; z-index: 5; }
+                    .tl { top: -5px; left: -5px; border-right: 0; border-bottom: 0; }
+                    .tr { top: -5px; right: -5px; border-left: 0; border-bottom: 0; }
+                    .header { height: 70px; display: flex; align-items: center; justify-content: center; color: ${meta.accent}; font-family: 'Playfair Display'; font-weight: 700; letter-spacing: 5px; text-transform: uppercase; font-size: 22px; margin: 0 50px; border-bottom: 0.5px solid rgba(226, 194, 117, 0.2); }
+                    .content { padding: 30px 60px; flex: 1; color: white; position: relative; }
+                    .venue-title { font-family: 'Playfair Display'; font-size: 34px; color: ${meta.accent}; margin-bottom: 5px; }
+                    .history-sub { font-family: 'Montserrat'; color: #aaa; text-transform: uppercase; font-size: 10px; letter-spacing: 2px; }
+                    .guest-section { margin-top: 35px; position: relative; }
+                    .label { font-family: 'Montserrat'; color: ${meta.accent}; font-size: 9px; letter-spacing: 3px; margin-bottom: 8px; font-weight: 700; }
+                    .guest-name { font-family: 'Playfair Display'; font-size: 42px; color: #fff; line-height: 1; margin-bottom: 25px; font-style: italic; }
+                    .info-grid { display: flex; gap: 50px; margin-top: 20px; }
+                    .info-item { border-left: 2px solid ${meta.accent}; padding-left: 15px; }
+                    .info-val { font-family: 'Montserrat'; font-weight: 700; font-size: 16px; color: #eee; text-transform: uppercase; }
+                    .qr-container { position: absolute; bottom: 40px; right: 60px; text-align: center; }
+                    .qr-img { width: 120px; height: 120px; background: white; padding: 10px; border-radius: 2px; border: 3px solid ${meta.accent}; }
+                    .itinerary-container { padding: 40px 80px; }
+                    .itin-title { text-align: center; font-family: 'Playfair Display'; font-size: 32px; font-style: italic; color: ${meta.accent}; margin-bottom: 40px; }
+                    .itin-row { display: flex; align-items: flex-start; margin-bottom: 30px; }
+                    .itin-time { width: 80px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff; }
+                    .itin-divider { width: 2px; height: 45px; background: rgba(255,255,255,0.3); margin: 0 25px; }
+                    .itin-divider.active { background: ${meta.accent}; width: 3px; }
+                    .itin-details { flex: 1; }
+                    .itin-act { font-family: 'Montserrat'; font-weight: 700; font-size: 22px; color: #fff; margin-bottom: 4px; }
+                    .itin-desc { font-family: 'Montserrat'; font-size: 13px; color: #888; }
+                    .itin-footer { text-align: center; margin-top: 40px; font-family: 'Playfair Display'; color: ${meta.accent}; font-size: 24px; font-style: italic; }
                 </style>
             </head>
             <body>
                 <div class="page">
                     <div class="border-frame">
+                        <div class="corner tl"></div><div class="corner tr"></div>
                         <div class="header">Sarami Events</div>
                         <div class="content">
                             <div class="venue-title">${meta.venue}</div>
-                            <div style="font-family: 'Montserrat'; color: #888; text-transform: uppercase; font-size: 11px; letter-spacing: 2px;">${meta.history}</div>
-                            
-                            <div style="margin-top: 30px;">
-                                <div style="font-family: 'Montserrat'; color: #666; font-size: 10px; text-transform: uppercase;">Esteemed Guest</div>
+                            <div class="history-sub">${meta.history}</div>
+                            <div class="guest-section">
+                                <div class="label">INVITATION FOR</div>
                                 <div class="guest-name">${data.payerName}</div>
                             </div>
-
-                            <div style="display: flex; gap: 60px; margin-top: 20px;">
-                                <div><div style="font-size: 10px; color: #666;">DATE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.date}</div></div>
-                                <div><div style="font-size: 10px; color: #666;">PACKAGE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.name}</div></div>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="label">DATE</div>
+                                    <div class="info-val">${meta.date}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="label">TIER</div>
+                                    <div class="info-val" style="color: ${meta.accent}">${meta.name}</div>
+                                </div>
                             </div>
-
-                            <div style="margin-top: 30px;" class="pricing-badge">KES ${meta.price} | PAID</div>
-
+                            <div style="margin-top: 40px; font-family: 'Montserrat'; font-weight: 900; font-size: 20px; color: #fff; letter-spacing: 2px;">
+                                KES ${meta.price} <span style="font-size: 12px; color: ${meta.accent}; margin-left: 10px;">[ CONFIRMED ]</span>
+                            </div>
                             <div class="qr-container">
                                 <img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode">
-                                <div style="color: ${meta.accent}; font-weight: bold; font-family: Montserrat; font-size: 9px; margin-top: 8px;">SCAN FOR ENTRY</div>
                             </div>
                         </div>
                     </div>
                 </div>
-
                 <div class="page">
                     <div class="border-frame">
-                        <div class="header">The Evening Itinerary</div>
-                        <div class="content" style="padding-top: 50px;">
-                            
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">18:30</div>
-                                <div class="info-block">
-                                    <div class="itinerary-title">Welcoming Cocktails</div>
-                                    <div class="itinerary-desc">Chilled signature cocktails upon arrival.</div>
-                                </div>
-                            </div>
-
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">19:00</div>
-                                <div class="info-block" style="border-left-color: ${meta.accent};">
-                                    <div class="itinerary-title" style="color: ${meta.accent};">Couples Games & Karaoke</div>
-                                    <div class="itinerary-desc">An hour of laughter, bonding, and melody.</div>
-                                </div>
-                            </div>
-
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">20:00</div>
-                                <div class="info-block">
-                                    <div class="itinerary-title">3-Course Gourmet Banquet</div>
-                                    <div class="itinerary-desc">Curated culinary excellence for two.</div>
-                                </div>
-                            </div>
-
-                            <div style="text-align: center; margin-top: 20px; font-family: 'Playfair Display'; font-style: italic; color: ${meta.accent}; font-size: 18px;">
-                                "Happy Valentine's to you and yours."
-                            </div>
+                        <div class="itinerary-container">
+                            <div class="itin-title">The Evening Itinerary</div>
+                            <div class="itin-row"><div class="itin-time">18:30</div><div class="itin-divider"></div><div class="itin-details"><div class="itin-act">Welcoming Cocktails</div><div class="itin-desc">Chilled signature cocktails upon arrival.</div></div></div>
+                            <div class="itin-row"><div class="itin-time">19:00</div><div class="itin-divider active"></div><div class="itin-details"><div class="itin-act" style="color: ${meta.accent}">Couples Games & Karaoke</div><div class="itin-desc">An hour of laughter, bonding, and melody.</div></div></div>
+                            <div class="itin-row"><div class="itin-time">20:00</div><div class="itin-divider"></div><div class="itin-details"><div class="itin-act">3-Course Gourmet Banquet</div><div class="itin-desc">Curated culinary excellence for two.</div></div></div>
+                            <div class="itin-footer">"Happy Valentine's to you and yours."</div>
                         </div>
                     </div>
                 </div>
             </body>
-            </html>
-        `);
+            </html>`);
         const pdf = await page.pdf({ width: '210mm', height: '148mm', printBackground: true });
-        console.log(`✅ [LOG] Step 6: PDF generated and sent to browser.`);
+        console.log(`✅ [LOG] PDF generated and sent for Order: ${req.params.orderId}`);
         res.set({ 'Content-Type': 'application/pdf' }).send(pdf);
-    } catch (e) { res.status(500).send(e.message); } finally { if (browser) await browser.close(); }
+    } catch (e) { 
+        console.error("❌ [LOG] PDF GENERATION ERROR:", e.message);
+        res.status(500).send(e.message); 
+    } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V11.5 - ONLINE`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.1 - SYSTEM ONLINE & LOGGING`));
