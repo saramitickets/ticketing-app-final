@@ -67,7 +67,7 @@ function getEventDetails(eventId, packageTier) {
         'ELDORET': {
             venue: "Marura Gardens, Eldoret",
             history: "The Highland's Premier Sanctuary of Serenity",
-            color: "#006064", // Retained: Luxury Teal
+            color: "#006064", 
             accent: "#D4AF37",
             packages: {
                 'FLAME': { name: "Eternal Flame Dinner", price: "10,000", quote: "One night, one flame, one forever memory." },
@@ -141,7 +141,7 @@ app.post('/api/create-order', async (req, res) => {
             const randomId = crypto.randomBytes(8).toString('hex');
             const payload = {
                 transactionId: `TXN-${randomId}`,
-                transactionReference: orderRef.id,
+                transactionReference: orderRef.id, // This is what we expect back
                 amount: Number(amount),
                 merchantId: "139", 
                 transactionTypeId: 1, 
@@ -160,7 +160,7 @@ app.post('/api/create-order', async (req, res) => {
                 console.log(`📲 [LOG] Payment Request Sent to ${payerPhone}. Waiting for user action...`);
                 return res.status(200).json({ success: true, orderId: orderRef.id });
             } catch (payErr) {
-                console.log(`❌ [LOG] CANCELLED: User closed the prompt or request failed for ${payerName}`);
+                console.log(`❌ [LOG] CANCELLED: Request failed for ${payerName}`);
                 await orderRef.update({ status: 'CANCELLED' });
                 return res.status(200).json({ success: true, orderId: orderRef.id, message: "Cancelled" });
             }
@@ -171,30 +171,36 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. UPDATED CALLBACK ROUTE (FIXED ERROR) ---
+// --- 5. UPDATED CALLBACK ROUTE (LOG FIX) ---
 app.post('/api/payment-callback', async (req, res) => {
-    // Try to find order ID in multiple possible locations to prevent 'undefined'
-    const orderId = req.body.transactionReference || req.body.merchantReference || req.body.orderId;
-    const status = req.body.status || "";
-
-    console.log(`🔔 [LOG] Received Callback for Order: ${orderId}`);
+    // Check multiple potential paths for the Order ID
+    const orderId = req.body.transactionReference || req.body.merchantReference || (req.body.data && req.body.data.transactionReference);
+    const status = req.body.status || (req.body.data && req.body.data.status) || "";
 
     if (!orderId) {
-        console.log("⚠️ [LOG] Callback received but Order ID is missing. Skipping update.");
+        console.log("⚠️ [LOG] Callback received but Order ID is missing. Check payload structure.");
+        console.log("DEBUG BODY:", JSON.stringify(req.body));
         return res.sendStatus(200);
     }
 
+    console.log(`🔔 [LOG] Received Callback for Order: ${orderId} | Status: ${status}`);
+
     try {
-        if (status.toUpperCase() === 'SUCCESS') {
-            console.log(`💰 [LOG] PAYMENT VERIFIED for Order: ${orderId}`);
-            const orderDoc = await db.collection('orders').doc(orderId).get();
-            if (orderDoc.exists) {
-                await db.collection('orders').doc(orderId).update({ status: 'PAID' });
-                await sendTicketEmail(orderDoc.data(), orderId);
-            }
+        const orderRef = db.collection('orders').doc(orderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            console.log(`⚠️ [LOG] Callback received for non-existent order: ${orderId}`);
+            return res.sendStatus(200);
+        }
+
+        if (status.toUpperCase() === 'SUCCESS' || status.toUpperCase() === 'COMPLETED') {
+            console.log(`💰 [LOG] PAID: Payment verified for Order: ${orderId}`);
+            await orderRef.update({ status: 'PAID', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            await sendTicketEmail(orderDoc.data(), orderId);
         } else {
-            console.log(`❌ [LOG] USER CANCELLED or PAYMENT FAILED at M-Pesa Prompt for: ${orderId}`);
-            await db.collection('orders').doc(orderId).update({ status: 'CANCELLED_AT_PROMPT' });
+            console.log(`❌ [LOG] CANCELLED: Payment failed or user cancelled for Order: ${orderId}`);
+            await orderRef.update({ status: 'CANCELLED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         }
     } catch (e) {
         console.error("❌ [CALLBACK ERROR]:", e.message);
@@ -208,6 +214,8 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     try {
         const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!orderDoc.exists) return res.status(404).send("Order not found");
+        
         const data = orderDoc.data();
         const meta = getEventDetails(data.eventId, data.packageTier);
 
@@ -222,7 +230,6 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                 <style>
                     body { margin: 0; padding: 0; background: #000; }
                     .page { width: 210mm; height: 148mm; position: relative; overflow: hidden; page-break-after: always; background: #0b0b0b; }
-                    
                     .border-frame { 
                         position: absolute; inset: 10mm; 
                         border: 2px solid ${meta.accent}; 
@@ -230,30 +237,24 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         display: flex; flex-direction: column; 
                         border-radius: 20px;
                     }
-
                     .header { 
                         height: 65px; display: flex; align-items: center; justify-content: center; 
                         color: ${meta.accent}; font-family: 'Playfair Display'; font-style: italic; font-size: 28px;
                         border-bottom: 1px solid rgba(212, 175, 55, 0.3);
                         margin: 0 40px;
                     }
-
                     .content { padding: 35px 50px; flex: 1; position: relative; color: white; }
-                    
                     .time-label { font-family: 'Montserrat'; font-weight: 700; font-size: 20px; color: white; width: 100px; }
                     .info-block { flex: 1; border-left: 2px solid #333; padding-left: 25px; margin-bottom: 30px; }
                     .itinerary-title { font-family: 'Montserrat'; font-weight: 700; font-size: 22px; color: white; margin-bottom: 5px; }
                     .itinerary-desc { font-family: 'Montserrat'; font-size: 14px; color: #999; }
-
                     .venue-title { font-family: 'Playfair Display'; font-size: 32px; color: ${meta.accent}; margin-bottom: 5px; }
                     .guest-name { font-family: 'Playfair Display'; font-size: 38px; color: white; margin: 10px 0; }
-
                     .pricing-badge {
                         display: inline-block; padding: 12px 30px; border-radius: 50px;
                         background: ${meta.color}; border: 1px solid ${meta.accent};
                         font-family: 'Montserrat'; font-weight: 700; font-size: 18px;
                     }
-
                     .qr-container { position: absolute; bottom: 35px; right: 50px; text-align: center; }
                     .qr-img { width: 150px; height: 150px; background: white; padding: 8px; border-radius: 10px; }
                 </style>
@@ -265,58 +266,18 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
                         <div class="content">
                             <div class="venue-title">${meta.venue}</div>
                             <div style="font-family: 'Montserrat'; color: #888; text-transform: uppercase; font-size: 11px; letter-spacing: 2px;">${meta.history}</div>
-                            
                             <div style="margin-top: 30px;">
                                 <div style="font-family: 'Montserrat'; color: #666; font-size: 10px; text-transform: uppercase;">Esteemed Guest</div>
                                 <div class="guest-name">${data.payerName}</div>
                             </div>
-
                             <div style="display: flex; gap: 60px; margin-top: 20px;">
                                 <div><div style="font-size: 10px; color: #666;">DATE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.date}</div></div>
                                 <div><div style="font-size: 10px; color: #666;">PACKAGE</div><div style="font-family: 'Montserrat'; font-weight:700;">${meta.name}</div></div>
                             </div>
-
                             <div style="margin-top: 30px;" class="pricing-badge">KES ${meta.price} | PAID</div>
-
                             <div class="qr-container">
                                 <img class="qr-img" src="https://barcode.tec-it.com/barcode.ashx?data=${qrContent}&code=QRCode">
                                 <div style="color: ${meta.accent}; font-weight: bold; font-family: Montserrat; font-size: 9px; margin-top: 8px;">SCAN FOR ENTRY</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="page">
-                    <div class="border-frame">
-                        <div class="header">The Evening Itinerary</div>
-                        <div class="content" style="padding-top: 50px;">
-                            
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">18:30</div>
-                                <div class="info-block">
-                                    <div class="itinerary-title">Welcoming Cocktails</div>
-                                    <div class="itinerary-desc">Chilled signature cocktails upon arrival.</div>
-                                </div>
-                            </div>
-
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">19:00</div>
-                                <div class="info-block" style="border-left-color: ${meta.accent};">
-                                    <div class="itinerary-title" style="color: ${meta.accent};">Couples Games & Karaoke</div>
-                                    <div class="itinerary-desc">An hour of laughter, bonding, and melody.</div>
-                                </div>
-                            </div>
-
-                            <div style="display: flex; align-items: flex-start;">
-                                <div class="time-label">20:00</div>
-                                <div class="info-block">
-                                    <div class="itinerary-title">3-Course Gourmet Banquet</div>
-                                    <div class="itinerary-desc">Curated culinary excellence for two.</div>
-                                </div>
-                            </div>
-
-                            <div style="text-align: center; margin-top: 20px; font-family: 'Playfair Display'; font-style: italic; color: ${meta.accent}; font-size: 18px;">
-                                "Happy Valentine's to you and yours."
                             </div>
                         </div>
                     </div>
