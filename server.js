@@ -10,7 +10,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const PAYMENT_BYPASS_MODE = true; // Set to true to skip payment prompt
+const PAYMENT_BYPASS_MODE = false; // Set to true to skip payment prompt
 
 // --- 1. FIREBASE & BREVO SETUP ---
 let db;
