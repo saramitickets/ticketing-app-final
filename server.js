@@ -1,6 +1,6 @@
 // ==========================================
-// SARAMI EVENTS TICKETING BACKEND - V15.8
-// UPDATED: Restored Payment Bypass + Inquisitive Logging
+// SARAMI EVENTS TICKETING BACKEND - V15.9
+// UPDATED: Added Real-time Status Polling Endpoint
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -119,7 +119,7 @@ async function sendTicketEmail(orderData, orderId) {
     }
 }
 
-// --- 4. CREATE ORDER (BYPASS LOGIC RESTORED) ---
+// --- 4. CREATE ORDER ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventId, packageTier, eventName } = req.body;
     console.log(`🚀 [BOOKING START] New request from ${payerName} for ${eventName}`);
@@ -169,7 +169,27 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// --- 5. CALLBACK ROUTE ---
+// --- 5. NEW: ORDER STATUS POLLING ENDPOINT ---
+app.get('/api/order-status/:orderId', async (req, res) => {
+    try {
+        const orderId = req.params.orderId;
+        const orderDoc = await db.collection('orders').doc(orderId).get();
+
+        if (!orderDoc.exists) {
+            return res.status(404).json({ status: 'NOT_FOUND' });
+        }
+
+        const data = orderDoc.data();
+        res.json({ 
+            status: data.status, 
+            cancelReason: data.cancelReason || "" 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- 6. CALLBACK ROUTE ---
 app.post('/api/payment-callback', express.raw({ type: '*/*' }), async (req, res) => {
     console.log("📥 [CALLBACK] Data received from gateway");
     let rawBody = req.body.toString('utf8').trim();
@@ -210,7 +230,7 @@ app.post('/api/payment-callback', express.raw({ type: '*/*' }), async (req, res)
     res.sendStatus(200);
 });
 
-// --- 6. PDF GENERATION ---
+// --- 7. PDF GENERATION ---
 app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     let browser;
     console.log(`🖨️ [PDF PROCESS] Generating ticket for Order: ${req.params.orderId}`);
@@ -310,4 +330,4 @@ app.get('/api/get-ticket-pdf/:orderId', async (req, res) => {
     } finally { if (browser) await browser.close(); }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI V15.8 - SYSTEM ONLINE & BYPASS READY`));
+app.listen(PORT, () => console.log(`🚀 SARAMI V15.9 - SYSTEM ONLINE & BYPASS READY`));
