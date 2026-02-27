@@ -1,6 +1,7 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
 // FIXED: charset, create-order logging, phone format, CORS for null + preflight, Render deploy (0.0.0.0 + /health)
+// NOW FIXED: callback body parsing for text/plain + ISO-8859-1 charset
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -33,12 +34,46 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
 });
 
+// ─── Custom parser to handle text/plain + ISO-8859-1 for callbacks ───
+app.use((req, res, next) => {
+  if (req.method !== 'POST') return next();
+
+  const contentType = (req.headers['content-type'] || '').toLowerCase();
+
+  // Log raw info
+  console.log('[INCOMING] Content-Type:', contentType);
+
+  if (contentType.includes('text/plain') || contentType.includes('application/json')) {
+    let rawBody = '';
+    req.setEncoding('utf8'); // Force UTF-8 reading
+    req.on('data', chunk => { rawBody += chunk; });
+    req.on('end', () => {
+      console.log('[RAW CALLBACK BODY]', rawBody.substring(0, 1000) + (rawBody.length > 1000 ? '...' : ''));
+
+      try {
+        // Attempt to parse as JSON (most common for these gateways)
+        req.body = JSON.parse(rawBody.trim());
+        console.log('[PARSED BODY]', JSON.stringify(req.body, null, 2));
+      } catch (parseErr) {
+        console.error('[PARSE ERROR]', parseErr.message);
+        req.body = {}; // fallback
+      }
+      next();
+    });
+    return;
+  }
+
+  // Fallback for other types
+  next();
+});
+
+// Standard parsers after custom one
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // ─── CORS - allows null (file://), localhost, and production ───
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
-  // During dev: allow null + localhost
-  // In production: remove 'null' and tighten the list
   const allowedOrigins = [
     'null',
     'http://localhost:3000',
@@ -61,9 +96,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // Helpers
 function formatPhone(phone) {
@@ -170,61 +202,80 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// ─── CALLBACK ───
+// ─── CALLBACK - improved parsing & ID matching ───
 app.post('/api/payment-callback', async (req, res) => {
     console.log('[CALLBACK] Headers:', req.headers);
-    console.log('[CALLBACK] Body:', JSON.stringify(req.body, null, 2));
+    console.log('[CALLBACK] Parsed Body:', JSON.stringify(req.body, null, 2));
+
     let data = req.body || {};
+
+    // Handle nested structure (common in STK callbacks)
     if (data.Body?.stkCallback) {
         data = data.Body.stkCallback;
     }
 
-    const mReqId = data.transactionId || data.TransactionId ||
-                   data.merchantRequestId || data.MerchantRequestID ||
-                   data.checkoutRequestId || data.CheckoutRequestID ||
-                   data.reference || data.transactionReference;
+    // Flexible ID lookup - add more variants as you see real payloads
+    const possibleIds = [
+        data.transactionId,
+        data.TransactionId,
+        data.merchantRequestId,
+        data.MerchantRequestID,
+        data.merchantRequestID,
+        data.checkoutRequestId,
+        data.CheckoutRequestID,
+        data.reference,
+        data.transactionReference,
+        data.MerchantRequestID // case sensitive variation
+    ];
+
+    const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim());
 
     if (!mReqId) {
-        console.error('[CALLBACK] No ID found. Keys:', Object.keys(data));
-        return res.status(200).send('OK');
+        console.error('[CALLBACK] No valid merchantRequestID / transactionId found in payload. Keys:', Object.keys(data));
+        return res.status(200).send('OK'); // Always acknowledge
     }
 
-    const resultCode = data.ResultCode ?? -1;
-    const isSuccess = resultCode === 0 || resultCode === '0' ||
-                      data.status?.toLowerCase?.().includes('success') ||
-                      data.message?.toLowerCase?.().includes('success');
-    const reason = data.ResultDesc || data.message || 'No reason';
+    console.log('[CALLBACK] Found merchant ID:', mReqId);
+
+    const resultCode = data.ResultCode ?? data.resultCode ?? -1;
+    const isSuccess = resultCode === 0 || resultCode === '0' || String(resultCode) === '0';
+
+    const reason = data.ResultDesc || data.resultDesc || data.message || data.ResultDescription || 'No reason provided';
 
     try {
         const snap = await db.collection('orders')
             .where('merchantRequestID', '==', mReqId)
-            .limit(1).get();
+            .limit(1)
+            .get();
 
         if (snap.empty) {
-            console.log('[CALLBACK] Order not found:', mReqId);
+            console.log('[CALLBACK] Order not found for ID:', mReqId);
             return res.status(200).send('OK');
         }
 
         const doc = snap.docs[0];
         const ref = doc.ref;
+
         await ref.update({
             status: isSuccess ? 'PAID' : 'CANCELLED',
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
-            reason,
-            mpesaReceipt: data.MpesaReceiptNumber || 'N/A',
+            reason: reason,
+            mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || 'N/A',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            rawCallback: data
+            rawCallback: data,
+            resultCode: resultCode
         });
 
-        console.log(`[UPDATED] ${doc.id} → ${isSuccess ? 'PAID' : 'CANCELLED'}`);
+        console.log(`[UPDATED] Order ${doc.id} → ${isSuccess ? 'PAID' : 'CANCELLED'} (Reason: ${reason})`);
 
         if (isSuccess) {
             sendConfirmationEmail(doc.data(), doc.id, ref).catch(console.error);
         }
     } catch (e) {
-        console.error('[DB ERROR]', e.message);
+        console.error('[DB UPDATE ERROR]', e.message);
     }
 
+    // Always respond 200 to avoid retries/flooding
     res.status(200).send('OK');
 });
 
