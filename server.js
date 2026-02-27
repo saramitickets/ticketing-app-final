@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// UPDATED: Enhanced Status Updates, Logging, and Email Handling
+// UPDATED: Improved Callback Parsing for Multiple Formats, Enhanced Logging
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -96,8 +96,9 @@ app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body;
     const eventId = "SL2026";
     const packageTier = "Standard Entry";
+    let orderRef;
     try {
-        const orderRef = await db.collection('orders').add({
+        orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
             eventId, packageTier, eventName: eventName || "The Sarami Lens 2026",
             status: 'INITIATED',
@@ -125,9 +126,10 @@ app.post('/api/create-order', async (req, res) => {
         const stkResponse = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        console.log(`[STK RESPONSE] Full response:`, JSON.stringify(stkResponse.data, null, 2));
 
-        // Check if STK push was successfully initiated (assuming 200/201 status or specific response code)
-        if (stkResponse.status === 200 || stkResponse.status === 201 || stkResponse.data.statusCode === 0) {
+        // Improved check for success - adjust based on actual API response structure
+        if (stkResponse.data.statusCode === 0 || stkResponse.data.success === true || stkResponse.status === 200) {
             await orderRef.update({
                 merchantRequestID: merchantTxId,
                 status: 'STK_SENT',
@@ -135,13 +137,12 @@ app.post('/api/create-order', async (req, res) => {
             });
             console.log(`✅ [STK] Push sent for Order: ${orderRef.id} - Merchant ID: ${merchantTxId}`);
         } else {
-            throw new Error(`STK push failed: ${stkResponse.data.message || 'Unknown error'}`);
+            throw new Error(`STK push failed: ${JSON.stringify(stkResponse.data)}`);
         }
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
         console.error(`❌ [ORDER ERROR] For new order: ${err.message}`);
-        // If order was created but STK failed, update status to reflect failure
         if (orderRef) {
             await orderRef.update({
                 status: 'STK_FAILED',
@@ -154,18 +155,34 @@ app.post('/api/create-order', async (req, res) => {
 });
 // --- 5. CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
-    console.log("📥 [CALLBACK] Processing data from gateway:", JSON.stringify(req.body, null, 2));
+    console.log("📥 [CALLBACK] Request received. Method:", req.method);
+    console.log("[CALLBACK] Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("[CALLBACK] Body:", JSON.stringify(req.body, null, 2));
    
-    // Support multiple gateway field naming conventions
-    const results = req.body.results || req.body.Result || req.body;
-    const mReqId = results.merchantTxnId || results.MerchantRequestID || results.merchantTxId || req.body.merchantTxnId;
-    const statusCode = (req.body.statusCode !== undefined) ? req.body.statusCode : (results.statusCode || req.body.ResultCode || null);
-    const message = req.body.message || results.message || req.body.ResultDesc || "No reason provided";
+    if (!req.body || Object.keys(req.body).length === 0) {
+        console.warn("⚠️ [CALLBACK] Empty body - Ignoring");
+        return res.sendStatus(200);
+    }
+
+    // Flexible parsing for different formats (M-Pesa standard, DTB/Tuma, etc.)
+    let results = req.body;
+    if (req.body.Body && req.body.Body.stkCallback) {
+        results = req.body.Body.stkCallback; // Standard M-Pesa format
+    } else if (req.body.results || req.body.Result) {
+        results = req.body.results || req.body.Result;
+    }
+
+    const mReqId = results.merchant_request_id || results.MerchantRequestID || results.merchantTxnId || 
+                   results.transactionId || results.MerchantTxnId || req.body.merchant_request_id || 
+                   results.merchantTxId || req.body.merchantTxnId;
 
     if (!mReqId) {
         console.warn("⚠️ [CALLBACK] Missing merchant ID - Ignoring request");
         return res.sendStatus(200);
     }
+
+    const statusCode = results.ResultCode || results.statusCode || (results.status === 'completed' ? 0 : (results.status === 'failed' || results.status === 'cancelled' ? 1 : null));
+    const message = results.ResultDesc || results.message || results.errorMessage || "No reason provided";
 
     try {
         const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
@@ -175,17 +192,17 @@ app.post('/api/payment-callback', async (req, res) => {
             const orderRef = db.collection('orders').doc(orderDoc.id);
             const orderId = orderDoc.id;
            
-            // Check for success codes (Accepts both 0 and 200)
-            if (statusCode == 0 || statusCode == 200) {
-                // THE FIX: .trim() ensures "PAID" never saves with a hidden space
+            // Success check: ResultCode 0, statusCode 0/200, or status 'completed'
+            if (statusCode === 0 || statusCode === 200 || results.status === 'completed') {
                 const finalStatus = "PAID".trim();
                 await orderRef.update({
                     status: finalStatus,
+                    mpesaReceipt: results.mpesa_receipt_number || results.CallbackMetadata?.Item?.find(item => item.Name === 'MpesaReceiptNumber')?.Value,
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
                 console.log(`✅ [SUCCESS] Order ${orderId} updated to PAID`);
-
-                // Trigger the email now that database is updated
+                
+                // Trigger email
                 await sendConfirmationEmail(orderDoc.data(), orderId, orderRef);
             } else {
                 await orderRef.update({
@@ -210,7 +227,6 @@ app.get('/api/order-status/:orderId', async (req, res) => {
         if (!orderDoc.exists) return res.status(404).json({ status: 'NOT_FOUND' });
        
         const data = orderDoc.data();
-        // Return trimmed status and additional details
         res.json({
             status: data.status ? data.status.trim() : "",
             emailStatus: data.emailStatus || "PENDING",
