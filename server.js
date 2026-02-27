@@ -1,10 +1,9 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: charset, create-order logging, phone format, CORS for null + preflight
+// FIXED: charset, create-order logging, phone format, CORS for null + preflight, Render deploy (0.0.0.0 + /health)
 // ==========================================
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
@@ -28,6 +27,11 @@ apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
+
+// ─── Health check for Render ───
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
 
 // ─── CORS - allows null (file://), localhost, and production ───
 app.use((req, res, next) => {
@@ -60,8 +64,6 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-const PORT = process.env.PORT || 10000;
 
 // Helpers
 function formatPhone(phone) {
@@ -237,4 +239,11 @@ app.get('/api/order-status/:orderId', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+// ─── Listen with 0.0.0.0 for Render ───
+const HOST = '0.0.0.0';
+const port = process.env.PORT || 10000;
+
+app.listen(port, HOST, () => {
+  console.log(`Server listening on http://${HOST}:${port}`);
+  console.log(`Using NODE_ENV=${process.env.NODE_ENV || 'development'}`);
+});
