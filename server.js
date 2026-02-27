@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: charset ISO-8859-1, create-order logging, phone format
+// FIXED: charset, create-order logging, phone format, CORS for null + preflight
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -29,36 +29,37 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 
-// ─── CUSTOM PARSER: Force UTF-8 for bad charsets ───
+// ─── CORS - allows null (file://), localhost, and production ───
 app.use((req, res, next) => {
-    if (req.method !== 'POST') return next();
+  const origin = req.headers.origin;
 
-    const ct = (req.headers['content-type'] || '').toLowerCase();
-    console.log(`[IN] ${req.method} ${req.url} | Content-Type: ${req.headers['content-type'] || 'none'}`);
+  // During dev: allow null + localhost
+  // In production: remove 'null' and tighten the list
+  const allowedOrigins = [
+    'null',
+    'http://localhost:3000',
+    'http://127.0.0.1:5500',
+    'http://localhost:8080',
+    // 'https://your-frontend-domain.vercel.app',   ← add later
+  ];
 
-    if (ct.includes('application/json') || ct.includes('json')) {
-        let raw = '';
-        req.setEncoding('utf8');
-        req.on('data', chunk => raw += chunk);
-        req.on('end', () => {
-            console.log('[RAW BODY]', raw.substring(0, 500) + (raw.length > 500 ? '...' : ''));
-            try {
-                req.body = JSON.parse(raw);
-                console.log('[PARSED BODY]', JSON.stringify(req.body, null, 2));
-            } catch (e) {
-                console.error('[PARSE FAIL]', e.message);
-                req.body = {};
-            }
-            next();
-        });
-        return;
-    }
-    next();
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
 });
 
-app.use(express.json({ type: '*/*' }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
 
 const PORT = process.env.PORT || 10000;
 
@@ -87,10 +88,10 @@ async function getAuthToken() {
     }
 }
 
-// Email function (unchanged, but with better catch)
+// Email function (placeholder - add your real logic)
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
-        // ... (your existing code) ...
+        // ... your email sending logic ...
         await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     } catch (err) {
         console.error('[EMAIL FAIL]', err.message);
@@ -102,7 +103,6 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
 app.post('/api/create-order', async (req, res) => {
     console.log('[CREATE-ORDER] Body received:', JSON.stringify(req.body, null, 2));
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body || {};
-
     if (!payerName || !payerEmail || !payerPhone || !amount) {
         return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
@@ -122,7 +122,6 @@ app.post('/api/create-order', async (req, res) => {
         console.log('[ORDER CREATED]', orderRef.id);
 
         const token = await getAuthToken();
-
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
         const formattedPhone = formatPhone(payerPhone);
 
@@ -158,7 +157,6 @@ app.post('/api/create-order', async (req, res) => {
     } catch (err) {
         console.error('[CREATE-ORDER ERROR]', err.message, err.stack?.substring(0, 300));
         const errMsg = err.response?.data || err.message || 'Unknown error';
-
         if (orderRef) {
             await orderRef.update({
                 status: 'FAILED',
@@ -166,23 +164,19 @@ app.post('/api/create-order', async (req, res) => {
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             }).catch(() => {});
         }
-
         res.status(500).json({ success: false, error: errMsg });
     }
 });
 
-// ─── CALLBACK (with forced utf-8 already handled above) ───
+// ─── CALLBACK ───
 app.post('/api/payment-callback', async (req, res) => {
     console.log('[CALLBACK] Headers:', req.headers);
     console.log('[CALLBACK] Body:', JSON.stringify(req.body, null, 2));
-
     let data = req.body || {};
-
     if (data.Body?.stkCallback) {
         data = data.Body.stkCallback;
     }
 
-    // Wide ID search (add more if needed after seeing logs)
     const mReqId = data.transactionId || data.TransactionId ||
                    data.merchantRequestId || data.MerchantRequestID ||
                    data.checkoutRequestId || data.CheckoutRequestID ||
@@ -197,7 +191,6 @@ app.post('/api/payment-callback', async (req, res) => {
     const isSuccess = resultCode === 0 || resultCode === '0' ||
                       data.status?.toLowerCase?.().includes('success') ||
                       data.message?.toLowerCase?.().includes('success');
-
     const reason = data.ResultDesc || data.message || 'No reason';
 
     try {
@@ -212,7 +205,6 @@ app.post('/api/payment-callback', async (req, res) => {
 
         const doc = snap.docs[0];
         const ref = doc.ref;
-
         await ref.update({
             status: isSuccess ? 'PAID' : 'CANCELLED',
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
@@ -234,7 +226,7 @@ app.post('/api/payment-callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// Status endpoint (unchanged)
+// Status endpoint
 app.get('/api/order-status/:orderId', async (req, res) => {
     try {
         const doc = await db.collection('orders').doc(req.params.orderId).get();
