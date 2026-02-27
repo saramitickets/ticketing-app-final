@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// UPDATED: Enhanced Callback Parsing & Firestore Sync
+// UPDATED: Enhanced Callback Parsing, Robust Logging & Firestore Sync
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -29,9 +29,21 @@ apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// Enhanced logging + more forgiving body parsing
+app.use((req, res, next) => {
+    if (req.method === 'POST') {
+        console.log("=".repeat(60));
+        console.log("📥 [INCOMING POST] at", new Date().toISOString());
+        console.log("Headers:", req.headers);
+        console.log("Content-Type:", req.get('content-type'));
+    }
+    next();
+});
+
+app.use(express.json({ type: "*/*" })); // Very forgiving – catches sloppy providers
 app.use(express.urlencoded({ extended: true }));
+app.use(cors());
 
 const PORT = process.env.PORT || 10000;
 
@@ -68,9 +80,17 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
                 <p><strong>Order ID:</strong> ${orderId}</p>
             </div>`
         });
-        await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        await orderRef.update({ 
+            emailStatus: 'SENT', 
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+        });
+        console.log(`📧 Email sent for order ${orderId}`);
     } catch (err) {
-        await orderRef.update({ emailStatus: `FAILED: ${err.message}` });
+        console.error("❌ Email failed:", err.message);
+        await orderRef.update({ 
+            emailStatus: `FAILED: ${err.message.slice(0, 200)}`, 
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+        });
     }
 }
 
@@ -80,7 +100,10 @@ app.post('/api/create-order', async (req, res) => {
     let orderRef;
     try {
         orderRef = await db.collection('orders').add({
-            payerName, payerEmail, payerPhone, amount: Number(amount),
+            payerName, 
+            payerEmail, 
+            payerPhone, 
+            amount: Number(amount),
             status: 'INITIATED',
             emailStatus: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -88,7 +111,7 @@ app.post('/api/create-order', async (req, res) => {
 
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
-        
+
         const payload = {
             transactionId: merchantTxId,
             transactionReference: orderRef.id,
@@ -100,6 +123,8 @@ app.post('/api/create-order', async (req, res) => {
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
+
+        console.log("→ Sending STK payload to InfinitiPay:", JSON.stringify(payload, null, 2));
 
         const stkResponse = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -113,67 +138,115 @@ app.post('/api/create-order', async (req, res) => {
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
-        if (orderRef) await orderRef.update({ status: 'STK_FAILED', reason: err.message });
+        console.error("❌ Create order failed:", err.message);
+        if (orderRef) {
+            await orderRef.update({ 
+                status: 'STK_FAILED', 
+                reason: err.message,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+            });
+        }
         res.status(500).json({ success: false, debug: err.message });
     }
 });
 
-// --- 5. CALLBACK ROUTE (FIXED) ---
+// --- 5. CALLBACK ROUTE (ROBUST VERSION) ---
 app.post('/api/payment-callback', async (req, res) => {
-    // Log exactly what is coming in to debug the "Empty Payload" issue
-    console.log("📥 [CALLBACK] Received Body:", JSON.stringify(req.body, null, 2));
+    console.log("=".repeat(60));
+    console.log("📥 [CALLBACK] Received at", new Date().toISOString());
+    console.log("Headers:", req.headers);
 
-    const data = req.body;
-    
-    // Deep search for Merchant ID in various formats
-    const mReqId = data.merchant_request_id || 
-                   data.MerchantRequestID || 
-                   data.transactionId || 
-                   (data.Body && data.Body.stkCallback && data.Body.stkCallback.MerchantRequestID);
+    // Show raw body in case express didn't parse it
+    console.log("Raw req.body (as received):", req.body);
 
-    if (!mReqId) {
-        console.error("❌ [CALLBACK ERROR] Could not extract Merchant ID from payload.");
-        return res.sendStatus(200); // Always respond 200 to the provider
+    let data = req.body || {};
+
+    // Handle common nested Daraja-style wrapper (very frequent with aggregators)
+    if (data.Body && data.Body.stkCallback) {
+        data = data.Body.stkCallback;
+        console.log("→ Detected nested Daraja structure → using stkCallback");
     }
 
-    // Determine Success
-    const resultCode = data.ResultCode ?? (data.Body?.stkCallback?.ResultCode);
-    const resultDesc = data.ResultDesc || data.message || data.Body?.stkCallback?.ResultDesc || "No reason provided";
-    const isSuccess = resultCode === 0 || data.status === 'completed' || data.status === 'success';
+    console.log("Parsed / Flattened data:", JSON.stringify(data, null, 2));
+
+    // Try many possible merchant/transaction ID field names (case insensitive variations)
+    const possibleIds = [
+        data.merchant_request_id, data.MerchantRequestID, data.merchantRequestId,
+        data.transactionId, data.TransactionID, data.transaction_id,
+        data.checkoutRequestId, data.CheckoutRequestID,
+        data.reference, data.transactionReference, data.merchantTxId,
+        data.MerchantTxId, data.transaction_ref
+    ];
+
+    const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim().length > 5);
+
+    if (!mReqId) {
+        console.error("❌ [CALLBACK ERROR] No merchant/transaction ID found in payload");
+        console.error("Available top-level keys:", Object.keys(data));
+        return res.status(200).json({ message: "OK – no recognizable ID" });
+    }
+
+    console.log(`→ Found merchant ID: ${mReqId}`);
+
+    // Determine success/failure
+    let resultCode = data.ResultCode ?? data.resultCode ?? data.statusCode ?? data.Resultcode ?? -1;
+    const resultDesc = data.ResultDesc || data.resultDesc || data.message || data.reason || data.status || "No description";
+
+    // Extra success checks (some providers use strings/status)
+    const isSuccess = (
+        resultCode === 0 || String(resultCode) === "0" ||
+        data.status === 'completed' || data.status === 'success' || data.status === 'PAID' ||
+        resultDesc.toLowerCase().includes('success') || resultDesc.toLowerCase().includes('accepted')
+    );
 
     try {
-        const query = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
-        
-        if (!query.empty) {
-            const doc = query.docs[0];
-            const orderRef = db.collection('orders').doc(doc.id);
-            const orderData = doc.data();
+        const query = await db.collection('orders')
+            .where('merchantRequestID', '==', mReqId)
+            .limit(1)
+            .get();
 
-            if (isSuccess) {
-                await orderRef.update({
-                    status: 'PAID',
-                    reason: 'Payment Successful',
-                    mpesaReceipt: data.MpesaReceiptNumber || "VERIFIED",
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                console.log(`✅ [UPDATED] Order ${doc.id} is now PAID`);
-                await sendConfirmationEmail(orderData, doc.id, orderRef);
-            } else {
-                await orderRef.update({
-                    status: 'CANCELLED',
-                    reason: resultDesc,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                console.log(`❌ [UPDATED] Order ${doc.id} is CANCELLED: ${resultDesc}`);
-            }
+        if (query.empty) {
+            console.warn(`⚠️ No order found for merchantRequestID: ${mReqId}`);
+            return res.status(200).json({ message: "OK – order not found" });
+        }
+
+        const doc = query.docs[0];
+        const orderRef = doc.ref;
+        const orderData = doc.data();
+
+        if (isSuccess) {
+            await orderRef.update({
+                status: 'PAID',
+                paymentStatus: 'PAID',
+                reason: 'Payment Successful',
+                mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || data.transactionRef || `VERIFIED_${Date.now()}`,
+                callbackReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                rawCallback: data, // Save full payload for debugging
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`✅ Order ${doc.id} updated to PAID`);
+
+            // Try to send email (non-blocking)
+            sendConfirmationEmail(orderData, doc.id, orderRef).catch(e => {
+                console.error("Email send failed (payment still recorded):", e.message);
+            });
         } else {
-            console.warn(`⚠️ [NOT FOUND] No order in DB for ID: ${mReqId}`);
+            await orderRef.update({
+                status: 'CANCELLED',
+                paymentStatus: 'FAILED',
+                reason: resultDesc || 'Payment Failed / Cancelled',
+                callbackReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                rawCallback: data,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`❌ Order ${doc.id} updated to CANCELLED (${resultDesc})`);
         }
     } catch (e) {
         console.error("❌ [DB UPDATE ERROR]:", e.message);
     }
 
-    res.status(200).send("Callback Processed");
+    // ALWAYS respond 200 quickly – prevents aggregator retries / timeouts
+    res.status(200).json({ received: true, message: "Callback processed" });
 });
 
 // --- 6. STATUS POLLING ---
@@ -181,15 +254,20 @@ app.get('/api/order-status/:orderId', async (req, res) => {
     try {
         const doc = await db.collection('orders').doc(req.params.orderId).get();
         if (!doc.exists) return res.status(404).json({ status: 'NOT_FOUND' });
+
         const data = doc.data();
         res.json({
             status: data.status,
+            paymentStatus: data.paymentStatus || data.status,
             reason: data.reason || "",
             mpesaReceipt: data.mpesaReceipt || ""
         });
     } catch (error) {
+        console.error("Status poll error:", error.message);
         res.status(500).json({ error: error.message });
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 SARAMI LENS 2026 - BACKEND READY`));
+app.listen(PORT, () => {
+    console.log(`🚀 SARAMI LENS 2026 - BACKEND READY on port ${PORT}`);
+});
