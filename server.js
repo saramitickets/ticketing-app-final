@@ -1,7 +1,7 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
 // FIXED: charset, create-order logging, phone format, CORS for null + preflight, Render deploy (0.0.0.0 + /health)
-// NOW FIXED: callback body parsing for text/plain + ISO-8859-1 charset
+// IMPROVED: more robust CORS with logging + explicit OPTIONS, better callback parsing
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -34,68 +34,71 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
 });
 
-// ─── Custom parser to handle text/plain + ISO-8859-1 for callbacks ───
+// ─── CORS with explicit OPTIONS handling + logging ───
+app.use((req, res, next) => {
+  const origin = req.headers.origin || req.headers.referer || 'unknown';
+
+  console.log(`[CORS] Request from origin: ${origin} | Method: ${req.method} | Path: ${req.path}`);
+
+  // Allow during dev: null + common local dev origins
+  const allowedPatterns = [
+    'null',
+    'http://localhost',
+    'http://127.0.0.1',
+    'https://localhost',
+  ];
+
+  let corsOrigin = '*'; // fallback (can be tightened in production)
+
+  // Check if origin matches any allowed pattern
+  if (origin === 'null' || allowedPatterns.some(pattern => origin?.startsWith(pattern))) {
+    corsOrigin = origin === 'null' ? '*' : origin;  // browsers accept * even for null in many cases
+  }
+
+  res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+
+  if (req.method === 'OPTIONS') {
+    console.log('[CORS] Responding to OPTIONS preflight');
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+// ─── Custom parser to handle text/plain + JSON for callbacks ───
 app.use((req, res, next) => {
   if (req.method !== 'POST') return next();
 
   const contentType = (req.headers['content-type'] || '').toLowerCase();
-
-  // Log raw info
   console.log('[INCOMING] Content-Type:', contentType);
 
   if (contentType.includes('text/plain') || contentType.includes('application/json')) {
     let rawBody = '';
-    req.setEncoding('utf8'); // Force UTF-8 reading
+    req.setEncoding('utf8');
     req.on('data', chunk => { rawBody += chunk; });
     req.on('end', () => {
-      console.log('[RAW CALLBACK BODY]', rawBody.substring(0, 1000) + (rawBody.length > 1000 ? '...' : ''));
+      console.log('[RAW BODY]', rawBody.substring(0, 1000) + (rawBody.length > 1000 ? '...' : ''));
 
       try {
-        // Attempt to parse as JSON (most common for these gateways)
         req.body = JSON.parse(rawBody.trim());
         console.log('[PARSED BODY]', JSON.stringify(req.body, null, 2));
       } catch (parseErr) {
         console.error('[PARSE ERROR]', parseErr.message);
-        req.body = {}; // fallback
+        req.body = {};
       }
       next();
     });
     return;
   }
 
-  // Fallback for other types
   next();
 });
 
-// Standard parsers after custom one
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// ─── CORS - allows null (file://), localhost, and production ───
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigins = [
-    'null',
-    'http://localhost:3000',
-    'http://127.0.0.1:5500',
-    'http://localhost:8080',
-    // 'https://your-frontend-domain.vercel.app',   ← add later
-  ];
-
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  }
-
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
 
 // Helpers
 function formatPhone(phone) {
@@ -122,10 +125,10 @@ async function getAuthToken() {
     }
 }
 
-// Email function (placeholder - add your real logic)
+// Email function (placeholder - implement your real email logic here)
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
-        // ... your email sending logic ...
+        // ... your Brevo / Sendinblue email sending code ...
         await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     } catch (err) {
         console.error('[EMAIL FAIL]', err.message);
@@ -133,10 +136,14 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
     }
 }
 
-// ─── CREATE ORDER ───
+// ─── CREATE ORDER ─── (with extra logging)
 app.post('/api/create-order', async (req, res) => {
-    console.log('[CREATE-ORDER] Body received:', JSON.stringify(req.body, null, 2));
+    console.log('[CREATE-ORDER] Incoming request from origin:', req.headers.origin);
+    console.log('[CREATE-ORDER] Headers:', req.headers);
+    console.log('[CREATE-ORDER] Body:', JSON.stringify(req.body, null, 2));
+
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body || {};
+
     if (!payerName || !payerEmail || !payerPhone || !amount) {
         return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
@@ -202,37 +209,28 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// ─── CALLBACK - improved parsing & ID matching ───
+// ─── CALLBACK ───
 app.post('/api/payment-callback', async (req, res) => {
     console.log('[CALLBACK] Headers:', req.headers);
     console.log('[CALLBACK] Parsed Body:', JSON.stringify(req.body, null, 2));
 
     let data = req.body || {};
-
-    // Handle nested structure (common in STK callbacks)
     if (data.Body?.stkCallback) {
         data = data.Body.stkCallback;
     }
 
-    // Flexible ID lookup - add more variants as you see real payloads
     const possibleIds = [
-        data.transactionId,
-        data.TransactionId,
-        data.merchantRequestId,
-        data.MerchantRequestID,
-        data.merchantRequestID,
-        data.checkoutRequestId,
-        data.CheckoutRequestID,
-        data.reference,
-        data.transactionReference,
-        data.MerchantRequestID // case sensitive variation
+        data.transactionId, data.TransactionId,
+        data.merchantRequestId, data.MerchantRequestID, data.merchantRequestID,
+        data.checkoutRequestId, data.CheckoutRequestID,
+        data.reference, data.transactionReference
     ];
 
     const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim());
 
     if (!mReqId) {
-        console.error('[CALLBACK] No valid merchantRequestID / transactionId found in payload. Keys:', Object.keys(data));
-        return res.status(200).send('OK'); // Always acknowledge
+        console.error('[CALLBACK] No valid ID found. Keys:', Object.keys(data));
+        return res.status(200).send('OK');
     }
 
     console.log('[CALLBACK] Found merchant ID:', mReqId);
@@ -275,7 +273,6 @@ app.post('/api/payment-callback', async (req, res) => {
         console.error('[DB UPDATE ERROR]', e.message);
     }
 
-    // Always respond 200 to avoid retries/flooding
     res.status(200).send('OK');
 });
 
