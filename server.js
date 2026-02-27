@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// UPDATED: Firestore Status Logic (PAID/CANCELLED) with Reasons
+// UPDATED: Enhanced Callback Parsing & Firestore Sync
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -22,7 +22,6 @@ try {
     console.error("❌ Firebase Error:", error.message);
 }
 
-// Brevo (formerly Sendinblue) Configuration
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -49,64 +48,39 @@ async function getAuthToken() {
             username: process.env.INFINITIPAY_MERCHANT_USERNAME,
             password: process.env.INFINITIPAY_MERCHANT_PASSWORD
         });
-        console.log("✅ [AUTH] Token acquired successfully");
         return authRes.data.access_token;
     } catch (err) {
-        console.error("❌ [AUTH ERROR] Failed to get token:", err.message);
+        console.error("❌ [AUTH ERROR]:", err.message);
         throw err;
     }
 }
 
 // --- 3. MAILING ENGINE ---
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
-    console.log(`📩 [EMAIL PROCESS] Preparing dispatch for: ${orderData.payerEmail}`);
-    
     try {
         await apiInstance.sendTransacEmail({
             sender: { email: "awards@saramievents.com", name: "Sarami Events" },
             to: [{ email: orderData.payerEmail, name: orderData.payerName }],
             subject: `📸 Entry Verified: The Sarami Lens 2026`,
-            htmlContent: `
-                <div style="background-color: #0a0a0a; padding: 50px 20px; font-family: 'Helvetica', sans-serif; text-align: center; color: #ffffff;">
-                    <div style="max-width: 600px; margin: auto; background: #111; border: 1px solid #d4af37; border-radius: 20px; padding: 40px;">
-                        <h1 style="color: #d4af37; letter-spacing: 2px; text-transform: uppercase; font-size: 22px;">Payment Verified</h1>
-                        <p style="font-size: 16px; color: #ccc;">Dear <strong>${orderData.payerName}</strong>,</p>
-                        <p style="font-size: 16px; color: #ccc;">Your entry fee for <strong>The Sarami Lens 2026</strong> has been verified.</p>
-                        
-                        <div style="margin: 30px 0; padding: 20px; background: rgba(212, 175, 55, 0.1); border-radius: 12px;">
-                            <p style="margin: 0; color: #d4af37; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Unique Payment ID</p>
-                            <p style="margin: 5px 0; font-size: 20px; font-weight: bold; color: #fff;">${orderId}</p>
-                        </div>
-                        <p style="font-size: 14px; color: #888;">Our judges look forward to reviewing your vision of Kenya. Good luck!</p>
-                        <hr style="border: 0; border-top: 1px solid #333; margin: 30px 0;">
-                        <p style="font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 2px;">Sarami Events | Capture the Heart of Kenya</p>
-                    </div>
-                </div>`
+            htmlContent: `<div style="background-color: #0a0a0a; padding: 50px 20px; color: #fff;">
+                <h1>Payment Verified</h1>
+                <p>Dear ${orderData.payerName}, your entry fee has been received.</p>
+                <p><strong>Order ID:</strong> ${orderId}</p>
+            </div>`
         });
-        console.log(`✅ [EMAIL] Successfully sent to ${orderData.payerEmail}`);
-        await orderRef.update({
-            emailStatus: 'SENT',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     } catch (err) {
-        console.error(`❌ [EMAIL ERROR] Failed to send to ${orderData.payerEmail}: ${err.message}`);
-        await orderRef.update({
-            emailStatus: `FAILED: ${err.message}`,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        await orderRef.update({ emailStatus: `FAILED: ${err.message}` });
     }
 }
 
 // --- 4. CREATE ORDER ---
 app.post('/api/create-order', async (req, res) => {
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body;
-    const eventId = "SL2026";
-    const packageTier = "Standard Entry";
     let orderRef;
     try {
         orderRef = await db.collection('orders').add({
             payerName, payerEmail, payerPhone, amount: Number(amount),
-            eventId, packageTier, eventName: eventName || "The Sarami Lens 2026",
             status: 'INITIATED',
             emailStatus: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -123,7 +97,6 @@ app.post('/api/create-order', async (req, res) => {
             transactionTypeId: 1,
             payerAccount: formatPhone(payerPhone),
             narration: `Sarami Lens: ${payerName}`,
-            promptDisplayAccount: "Sarami Events",
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1
         };
@@ -132,100 +105,86 @@ app.post('/api/create-order', async (req, res) => {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        if (stkResponse.data.statusCode === 0 || stkResponse.data.success === true || stkResponse.status === 200) {
-            await orderRef.update({
-                merchantRequestID: merchantTxId,
-                status: 'STK_SENT',
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            console.log(`✅ [STK] Push sent for Order: ${orderRef.id}`);
-        } else {
-            throw new Error(`STK push failed: ${JSON.stringify(stkResponse.data)}`);
-        }
+        await orderRef.update({
+            merchantRequestID: merchantTxId,
+            status: 'STK_SENT',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
-        console.error(`❌ [ORDER ERROR]: ${err.message}`);
-        if (orderRef) {
-            await orderRef.update({
-                status: 'STK_FAILED',
-                reason: err.message,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-        }
+        if (orderRef) await orderRef.update({ status: 'STK_FAILED', reason: err.message });
         res.status(500).json({ success: false, debug: err.message });
     }
 });
 
-// --- 5. CALLBACK ROUTE ---
+// --- 5. CALLBACK ROUTE (FIXED) ---
 app.post('/api/payment-callback', async (req, res) => {
-    console.log("📥 [CALLBACK] Received payload:", JSON.stringify(req.body, null, 2));
+    // Log exactly what is coming in to debug the "Empty Payload" issue
+    console.log("📥 [CALLBACK] Received Body:", JSON.stringify(req.body, null, 2));
+
+    const data = req.body;
     
-    if (!req.body || Object.keys(req.body).length === 0) return res.sendStatus(200);
-
-    let results = req.body;
-    if (req.body.Body && req.body.Body.stkCallback) {
-        results = req.body.Body.stkCallback;
-    } else if (req.body.results || req.body.Result) {
-        results = req.body.results || req.body.Result;
-    }
-
-    const mReqId = results.merchant_request_id || results.MerchantRequestID || results.merchantTxnId || 
-                   results.transactionId || results.MerchantTxnId || results.merchantTxId;
+    // Deep search for Merchant ID in various formats
+    const mReqId = data.merchant_request_id || 
+                   data.MerchantRequestID || 
+                   data.transactionId || 
+                   (data.Body && data.Body.stkCallback && data.Body.stkCallback.MerchantRequestID);
 
     if (!mReqId) {
-        console.warn("⚠️ [CALLBACK] No Merchant ID found");
-        return res.sendStatus(200);
+        console.error("❌ [CALLBACK ERROR] Could not extract Merchant ID from payload.");
+        return res.sendStatus(200); // Always respond 200 to the provider
     }
 
-    const statusCode = results.ResultCode || results.statusCode || (results.status === 'completed' ? 0 : 1);
-    const message = results.ResultDesc || results.message || results.errorMessage || "No specific reason provided";
+    // Determine Success
+    const resultCode = data.ResultCode ?? (data.Body?.stkCallback?.ResultCode);
+    const resultDesc = data.ResultDesc || data.message || data.Body?.stkCallback?.ResultDesc || "No reason provided";
+    const isSuccess = resultCode === 0 || data.status === 'completed' || data.status === 'success';
 
     try {
-        const querySnapshot = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
+        const query = await db.collection('orders').where('merchantRequestID', '==', mReqId).limit(1).get();
         
-        if (!querySnapshot.empty) {
-            const orderDoc = querySnapshot.docs[0];
-            const orderRef = db.collection('orders').doc(orderDoc.id);
-            const orderId = orderDoc.id;
-            
-            // Success: ResultCode 0 or status 'completed'
-            if (statusCode === 0 || results.status === 'completed') {
+        if (!query.empty) {
+            const doc = query.docs[0];
+            const orderRef = db.collection('orders').doc(doc.id);
+            const orderData = doc.data();
+
+            if (isSuccess) {
                 await orderRef.update({
                     status: 'PAID',
-                    reason: "Payment verified successfully.",
-                    mpesaReceipt: results.mpesa_receipt_number || results.CallbackMetadata?.Item?.find(item => item.Name === 'MpesaReceiptNumber')?.Value || "N/A",
+                    reason: 'Payment Successful',
+                    mpesaReceipt: data.MpesaReceiptNumber || "VERIFIED",
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
-                console.log(`✅ [SUCCESS] Order ${orderId} updated to PAID`);
-                await sendConfirmationEmail(orderDoc.data(), orderId, orderRef);
+                console.log(`✅ [UPDATED] Order ${doc.id} is now PAID`);
+                await sendConfirmationEmail(orderData, doc.id, orderRef);
             } else {
-                // Failure/Cancellation
                 await orderRef.update({
                     status: 'CANCELLED',
-                    reason: message,
+                    reason: resultDesc,
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
-                console.log(`❌ [CANCELLED] Order ${orderId} - Reason: ${message}`);
+                console.log(`❌ [UPDATED] Order ${doc.id} is CANCELLED: ${resultDesc}`);
             }
+        } else {
+            console.warn(`⚠️ [NOT FOUND] No order in DB for ID: ${mReqId}`);
         }
-    } catch (e) { 
-        console.error(`❌ [DB ERROR] Callback processing failed: ${e.message}`); 
+    } catch (e) {
+        console.error("❌ [DB UPDATE ERROR]:", e.message);
     }
-    res.sendStatus(200);
+
+    res.status(200).send("Callback Processed");
 });
 
 // --- 6. STATUS POLLING ---
 app.get('/api/order-status/:orderId', async (req, res) => {
     try {
-        const orderDoc = await db.collection('orders').doc(req.params.orderId).get();
-        if (!orderDoc.exists) return res.status(404).json({ status: 'NOT_FOUND' });
-        
-        const data = orderDoc.data();
+        const doc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!doc.exists) return res.status(404).json({ status: 'NOT_FOUND' });
+        const data = doc.data();
         res.json({
-            status: data.status ? data.status.trim() : "",
-            emailStatus: data.emailStatus || "PENDING",
-            reason: data.reason || "", // Unified field for both paid/cancelled reasons
+            status: data.status,
+            reason: data.reason || "",
             mpesaReceipt: data.mpesaReceipt || ""
         });
     } catch (error) {
