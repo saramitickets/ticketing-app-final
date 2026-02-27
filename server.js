@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// UPDATED: Enhanced Callback Parsing, Robust Logging & Firestore Sync
+// UPDATED: Fixed ISO-8859-1 charset + Robust Callback + Detailed Logging
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -30,19 +30,49 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 
-// Enhanced logging + more forgiving body parsing
+// ────────────────────────────────────────────────
+// CUSTOM BODY PARSER: Handle ISO-8859-1 charset issue
+// ────────────────────────────────────────────────
 app.use((req, res, next) => {
-    if (req.method === 'POST') {
-        console.log("=".repeat(60));
-        console.log("📥 [INCOMING POST] at", new Date().toISOString());
-        console.log("Headers:", req.headers);
-        console.log("Content-Type:", req.get('content-type'));
+    if (req.method !== 'POST') return next();
+
+    const contentType = (req.headers['content-type'] || '').toLowerCase();
+    console.log("=".repeat(70));
+    console.log("[INCOMING]", new Date().toISOString());
+    console.log("Content-Type:", req.headers['content-type']);
+    console.log("Content-Length:", req.headers['content-length']);
+
+    if (contentType.includes('application/json')) {
+        let rawData = '';
+        req.setEncoding('utf-8'); // Force UTF-8 read regardless of declared charset
+
+        req.on('data', (chunk) => {
+            rawData += chunk;
+        });
+
+        req.on('end', () => {
+            console.log("Raw body received (utf-8 forced):", rawData || "[empty]");
+
+            try {
+                req.body = JSON.parse(rawData);
+                console.log("Successfully parsed JSON:", JSON.stringify(req.body, null, 2));
+            } catch (parseErr) {
+                console.error("JSON parse failed:", parseErr.message);
+                req.body = {};
+            }
+            next();
+        });
+        return; // Don't continue to other parsers yet
     }
+
+    // Fallback for non-JSON or after custom handling
     next();
 });
 
-app.use(express.json({ type: "*/*" })); // Very forgiving – catches sloppy providers
+// Standard parsers as fallback/safety
+app.use(express.json({ type: ['application/json', '*/*'] }));
 app.use(express.urlencoded({ extended: true }));
+
 app.use(cors());
 
 const PORT = process.env.PORT || 10000;
@@ -84,11 +114,11 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
             emailStatus: 'SENT', 
             updatedAt: admin.firestore.FieldValue.serverTimestamp() 
         });
-        console.log(`📧 Email sent for order ${orderId}`);
+        console.log(`📧 Email sent for ${orderId}`);
     } catch (err) {
-        console.error("❌ Email failed:", err.message);
+        console.error("Email failed:", err.message);
         await orderRef.update({ 
-            emailStatus: `FAILED: ${err.message.slice(0, 200)}`, 
+            emailStatus: `FAILED: ${err.message.slice(0, 150)}`,
             updatedAt: admin.firestore.FieldValue.serverTimestamp() 
         });
     }
@@ -100,9 +130,7 @@ app.post('/api/create-order', async (req, res) => {
     let orderRef;
     try {
         orderRef = await db.collection('orders').add({
-            payerName, 
-            payerEmail, 
-            payerPhone, 
+            payerName, payerEmail, payerPhone, 
             amount: Number(amount),
             status: 'INITIATED',
             emailStatus: 'PENDING',
@@ -124,11 +152,13 @@ app.post('/api/create-order', async (req, res) => {
             ptyId: 1
         };
 
-        console.log("→ Sending STK payload to InfinitiPay:", JSON.stringify(payload, null, 2));
+        console.log("STK Push payload sent:", JSON.stringify(payload, null, 2));
 
-        const stkResponse = await axios.post(process.env.INFINITIPAY_STKPUSH_URL, payload, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const stkResponse = await axios.post(
+            process.env.INFINITIPAY_STKPUSH_URL, 
+            payload, 
+            { headers: { 'Authorization': `Bearer ${token}` } }
+        );
 
         await orderRef.update({
             merchantRequestID: merchantTxId,
@@ -138,7 +168,7 @@ app.post('/api/create-order', async (req, res) => {
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
-        console.error("❌ Create order failed:", err.message);
+        console.error("Create order error:", err.message);
         if (orderRef) {
             await orderRef.update({ 
                 status: 'STK_FAILED', 
@@ -146,71 +176,70 @@ app.post('/api/create-order', async (req, res) => {
                 updatedAt: admin.firestore.FieldValue.serverTimestamp() 
             });
         }
-        res.status(500).json({ success: false, debug: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// --- 5. CALLBACK ROUTE (ROBUST VERSION) ---
+// --- 5. CALLBACK ROUTE ---
 app.post('/api/payment-callback', async (req, res) => {
-    console.log("=".repeat(60));
-    console.log("📥 [CALLBACK] Received at", new Date().toISOString());
-    console.log("Headers:", req.headers);
-
-    // Show raw body in case express didn't parse it
-    console.log("Raw req.body (as received):", req.body);
+    console.log("=".repeat(80));
+    console.log("[CALLBACK RECEIVED]", new Date().toISOString());
+    console.log("Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("req.body:", req.body);
 
     let data = req.body || {};
 
-    // Handle common nested Daraja-style wrapper (very frequent with aggregators)
+    // Handle possible nested structure (common in Daraja proxies)
     if (data.Body && data.Body.stkCallback) {
         data = data.Body.stkCallback;
-        console.log("→ Detected nested Daraja structure → using stkCallback");
+        console.log("→ Using nested stkCallback data");
     }
 
-    console.log("Parsed / Flattened data:", JSON.stringify(data, null, 2));
+    console.log("Working data:", JSON.stringify(data, null, 2));
 
-    // Try many possible merchant/transaction ID field names (case insensitive variations)
-    const possibleIds = [
-        data.merchant_request_id, data.MerchantRequestID, data.merchantRequestId,
-        data.transactionId, data.TransactionID, data.transaction_id,
+    // Wide search for transaction/merchant ID (you used transactionId when initiating)
+    const possibleMerchantIds = [
+        data.transactionId, data.TransactionId, data.transaction_id,
+        data.merchantRequestId, data.MerchantRequestID, data.merchant_request_id,
         data.checkoutRequestId, data.CheckoutRequestID,
         data.reference, data.transactionReference, data.merchantTxId,
-        data.MerchantTxId, data.transaction_ref
+        data.transaction_ref
     ];
 
-    const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim().length > 5);
+    const mReqId = possibleMerchantIds.find(id => 
+        id && typeof id === 'string' && id.trim().length >= 8
+    );
 
     if (!mReqId) {
-        console.error("❌ [CALLBACK ERROR] No merchant/transaction ID found in payload");
-        console.error("Available top-level keys:", Object.keys(data));
-        return res.status(200).json({ message: "OK – no recognizable ID" });
+        console.error("No usable merchant/transaction ID found");
+        console.error("Top-level keys:", Object.keys(data));
+        return res.status(200).json({ received: true });
     }
 
-    console.log(`→ Found merchant ID: ${mReqId}`);
+    console.log(`→ Matched ID: ${mReqId}`);
 
-    // Determine success/failure
-    let resultCode = data.ResultCode ?? data.resultCode ?? data.statusCode ?? data.Resultcode ?? -1;
-    const resultDesc = data.ResultDesc || data.resultDesc || data.message || data.reason || data.status || "No description";
+    // Success detection
+    let resultCode = data.ResultCode ?? data.resultCode ?? data.statusCode ?? -1;
+    const description = data.ResultDesc || data.message || data.reason || data.status || "No desc";
 
-    // Extra success checks (some providers use strings/status)
     const isSuccess = (
-        resultCode === 0 || String(resultCode) === "0" ||
-        data.status === 'completed' || data.status === 'success' || data.status === 'PAID' ||
-        resultDesc.toLowerCase().includes('success') || resultDesc.toLowerCase().includes('accepted')
+        resultCode === 0 || resultCode === '0' ||
+        description.toLowerCase().includes('success') ||
+        data.status === 'completed' || data.status === 'success' || data.status === 'PAID'
     );
 
     try {
-        const query = await db.collection('orders')
+        const snap = await db.collection('orders')
             .where('merchantRequestID', '==', mReqId)
             .limit(1)
             .get();
 
-        if (query.empty) {
-            console.warn(`⚠️ No order found for merchantRequestID: ${mReqId}`);
-            return res.status(200).json({ message: "OK – order not found" });
+        if (snap.empty) {
+            console.warn(`Order not found for ID: ${mReqId}`);
+            return res.status(200).json({ received: true });
         }
 
-        const doc = query.docs[0];
+        const doc = snap.docs[0];
         const orderRef = doc.ref;
         const orderData = doc.data();
 
@@ -219,34 +248,32 @@ app.post('/api/payment-callback', async (req, res) => {
                 status: 'PAID',
                 paymentStatus: 'PAID',
                 reason: 'Payment Successful',
-                mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || data.transactionRef || `VERIFIED_${Date.now()}`,
+                mpesaReceipt: data.MpesaReceiptNumber || data.receipt || "VERIFIED",
                 callbackReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                rawCallback: data, // Save full payload for debugging
+                rawCallbackPayload: data,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
-            console.log(`✅ Order ${doc.id} updated to PAID`);
+            console.log(`PAID → Order ${doc.id}`);
 
-            // Try to send email (non-blocking)
-            sendConfirmationEmail(orderData, doc.id, orderRef).catch(e => {
-                console.error("Email send failed (payment still recorded):", e.message);
+            sendConfirmationEmail(orderData, doc.id, orderRef).catch(err => {
+                console.error("Email failed (payment OK):", err.message);
             });
         } else {
             await orderRef.update({
                 status: 'CANCELLED',
                 paymentStatus: 'FAILED',
-                reason: resultDesc || 'Payment Failed / Cancelled',
+                reason: description || 'Failed/Cancelled',
                 callbackReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                rawCallback: data,
+                rawCallbackPayload: data,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
-            console.log(`❌ Order ${doc.id} updated to CANCELLED (${resultDesc})`);
+            console.log(`CANCELLED → Order ${doc.id} (${description})`);
         }
-    } catch (e) {
-        console.error("❌ [DB UPDATE ERROR]:", e.message);
+    } catch (dbErr) {
+        console.error("Firestore error:", dbErr.message);
     }
 
-    // ALWAYS respond 200 quickly – prevents aggregator retries / timeouts
-    res.status(200).json({ received: true, message: "Callback processed" });
+    res.status(200).json({ received: true, message: "OK" });
 });
 
 // --- 6. STATUS POLLING ---
@@ -255,19 +282,18 @@ app.get('/api/order-status/:orderId', async (req, res) => {
         const doc = await db.collection('orders').doc(req.params.orderId).get();
         if (!doc.exists) return res.status(404).json({ status: 'NOT_FOUND' });
 
-        const data = doc.data();
+        const d = doc.data();
         res.json({
-            status: data.status,
-            paymentStatus: data.paymentStatus || data.status,
-            reason: data.reason || "",
-            mpesaReceipt: data.mpesaReceipt || ""
+            status: d.status,
+            paymentStatus: d.paymentStatus || d.status,
+            reason: d.reason || "",
+            mpesaReceipt: d.mpesaReceipt || ""
         });
-    } catch (error) {
-        console.error("Status poll error:", error.message);
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 SARAMI LENS 2026 - BACKEND READY on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
