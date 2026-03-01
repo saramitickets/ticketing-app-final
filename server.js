@@ -1,7 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: Removed manual stream parsing to fix "stream encoding should not be set" 500 Error
-// IMPROVED: Using safe express.text() and express.json() parsers
+// FIXED: Mapped InfinitiPay's nested `results.merchantTxnId` and `statusCode`
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -49,16 +48,11 @@ app.use((req, res, next) => {
 });
 
 // ─── Safe Body Parsers ───
-// This safely handles standard frontend requests
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
-
-// This handles weird payment callbacks that come as text/plain
 app.use(express.text({ type: 'text/plain' })); 
 
 // ─── Callback JSON Converter ───
-// If a payment gateway sends JSON but incorrectly labels it as text/plain,
-// this safely converts the string back into a usable JavaScript object.
 app.use((req, res, next) => {
   if (req.method === 'POST') {
       const contentType = (req.headers['content-type'] || '').toLowerCase();
@@ -187,16 +181,21 @@ app.post('/api/payment-callback', async (req, res) => {
     console.log('[CALLBACK] Parsed Body:', JSON.stringify(req.body, null, 2));
 
     let data = req.body || {};
+    
+    // Safaricom standard wrapper
     if (data.Body?.stkCallback) {
-        data = data.Body.stkCallback; // Unwrap standard Safaricom callback
+        data = data.Body.stkCallback; 
     }
+
+    // InfinitiPay standard wrapper
+    const resultsObj = data.results || {}; 
 
     try {
         let orderDoc = null;
         let ref = null;
 
         // 1. Try to find by exact Firestore Document ID first
-        const docId = data.transactionReference || data.reference;
+        const docId = data.transactionReference || data.reference || resultsObj.transactionReference;
         if (docId && typeof docId === 'string') {
             const docSnap = await db.collection('orders').doc(docId).get();
             if (docSnap.exists) {
@@ -206,12 +205,13 @@ app.post('/api/payment-callback', async (req, res) => {
             }
         }
 
-        // 2. Fallback: Try to find by merchantRequestID if Document ID lookup failed
+        // 2. Fallback: Look up by merchantRequestID (TXN-xxxx)
         if (!ref) {
             const possibleIds = [
-                data.transactionId, data.TransactionId,
+                resultsObj.merchantTxnId, // <-- InfinitiPay specifically uses this!
                 data.merchantRequestId, data.MerchantRequestID, data.merchantRequestID,
-                data.checkoutRequestId, data.CheckoutRequestID
+                data.checkoutRequestId, data.CheckoutRequestID,
+                data.transactionId, data.TransactionId, resultsObj.transactionId
             ];
             
             const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim());
@@ -235,25 +235,34 @@ app.post('/api/payment-callback', async (req, res) => {
             return res.status(200).send('OK');
         }
 
-        // Determine Success via multiple common gateway fields
-        const resultCode = data.ResultCode ?? data.resultCode ?? data.statusCode;
+        // Determine Success
+        const resultCode = data.statusCode ?? data.ResultCode ?? data.resultCode;
         const statusStr = (data.status || data.Status || '').toUpperCase();
         
+        // HTTP 200 or 0 usually means success
         const isSuccess = 
             resultCode === 0 || 
             resultCode === '0' || 
+            resultCode === 200 || 
+            resultCode === '200' || 
             statusStr === 'SUCCESS' || 
             statusStr === 'COMPLETED' || 
             statusStr === 'PAID';
 
-        const reason = data.ResultDesc || data.resultDesc || data.message || data.ResultDescription || 'No reason provided';
+        const reason = data.message || data.ResultDesc || data.resultDesc || data.ResultDescription || 'No reason provided';
+        
+        // Grab Mpesa Receipt (InfinitiPay uses mnoRef, but it might be "0" on failure)
+        let receipt = 'N/A';
+        if (resultsObj.mnoRef && resultsObj.mnoRef !== "0") receipt = resultsObj.mnoRef;
+        else if (data.MpesaReceiptNumber) receipt = data.MpesaReceiptNumber;
+        else if (data.receiptNumber) receipt = data.receiptNumber;
 
         // Update Database
         await ref.update({
             status: isSuccess ? 'PAID' : 'CANCELLED',
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
             reason: reason,
-            mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || data.transactionId || 'N/A',
+            mpesaReceipt: receipt,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             rawCallback: data,
             resultCode: resultCode || statusStr || -1
