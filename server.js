@@ -1,6 +1,6 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: Callback lookup logic, broader success status checks
+// FIXED: Bulletproof CORS for local files (null origin), Callback lookup logic, broader success status checks
 // IMPROVED: Direct Document ID querying for faster, reliable lookups
 // ==========================================
 const express = require('express');
@@ -34,32 +34,20 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
 });
 
-// ─── CORS with explicit OPTIONS handling + logging ───
+// ─── Bulletproof CORS Middleware ───
 app.use((req, res, next) => {
-  const origin = req.headers.origin || req.headers.referer || 'unknown';
+  // Grab the origin, default to '*' if missing
+  const origin = req.headers.origin || '*';
 
-  console.log(`[CORS] Request from origin: ${origin} | Method: ${req.method} | Path: ${req.path}`);
-
-  const allowedPatterns = [
-    'null',
-    'http://localhost',
-    'http://127.0.0.1',
-    'https://localhost',
-  ];
-
-  let corsOrigin = '*'; 
-
-  if (origin === 'null' || allowedPatterns.some(pattern => origin?.startsWith(pattern))) {
-    corsOrigin = origin === 'null' ? '*' : origin;  
-  }
-
-  res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+  // Reflect the exact origin back to satisfy 'credentials: true' requirements,
+  // even if the origin is 'null' (like when opening local HTML files)
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
 
+  // Handle preflight requests instantly
   if (req.method === 'OPTIONS') {
-    console.log('[CORS] Responding to OPTIONS preflight');
     return res.sendStatus(204);
   }
 
