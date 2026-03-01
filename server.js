@@ -1,7 +1,7 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: Bulletproof CORS for local files (null origin), Callback lookup logic, broader success status checks
-// IMPROVED: Direct Document ID querying for faster, reliable lookups
+// FIXED: Removed manual stream parsing to fix "stream encoding should not be set" 500 Error
+// IMPROVED: Using safe express.text() and express.json() parsers
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -36,55 +36,45 @@ app.get('/health', (req, res) => {
 
 // ─── Bulletproof CORS Middleware ───
 app.use((req, res, next) => {
-  // Grab the origin, default to '*' if missing
   const origin = req.headers.origin || '*';
-
-  // Reflect the exact origin back to satisfy 'credentials: true' requirements,
-  // even if the origin is 'null' (like when opening local HTML files)
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
 
-  // Handle preflight requests instantly
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
-
   next();
 });
 
-// ─── Custom parser to handle text/plain + JSON for callbacks ───
-app.use((req, res, next) => {
-  if (req.method !== 'POST') return next();
-
-  const contentType = (req.headers['content-type'] || '').toLowerCase();
-  console.log('[INCOMING] Content-Type:', contentType);
-
-  if (contentType.includes('text/plain') || contentType.includes('application/json')) {
-    let rawBody = '';
-    req.setEncoding('utf8');
-    req.on('data', chunk => { rawBody += chunk; });
-    req.on('end', () => {
-      console.log('[RAW BODY]', rawBody.substring(0, 1000) + (rawBody.length > 1000 ? '...' : ''));
-
-      try {
-        req.body = JSON.parse(rawBody.trim());
-        console.log('[PARSED BODY]', JSON.stringify(req.body, null, 2));
-      } catch (parseErr) {
-        console.error('[PARSE ERROR]', parseErr.message);
-        req.body = {};
-      }
-      next();
-    });
-    return;
-  }
-
-  next();
-});
-
-app.use(express.json());
+// ─── Safe Body Parsers ───
+// This safely handles standard frontend requests
+app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
+
+// This handles weird payment callbacks that come as text/plain
+app.use(express.text({ type: 'text/plain' })); 
+
+// ─── Callback JSON Converter ───
+// If a payment gateway sends JSON but incorrectly labels it as text/plain,
+// this safely converts the string back into a usable JavaScript object.
+app.use((req, res, next) => {
+  if (req.method === 'POST') {
+      const contentType = (req.headers['content-type'] || '').toLowerCase();
+      console.log(`[INCOMING REQUEST] Path: ${req.path} | Content-Type: ${contentType}`);
+      
+      if (typeof req.body === 'string') {
+          try {
+              req.body = JSON.parse(req.body.trim());
+              console.log('[RESCUED TEXT/PLAIN BODY]', JSON.stringify(req.body, null, 2));
+          } catch (e) {
+              // Not valid JSON, leave it as a text string
+          }
+      }
+  }
+  next();
+});
 
 // Helpers
 function formatPhone(phone) {
@@ -123,7 +113,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
 
 // ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
-    console.log('[CREATE-ORDER] Incoming request from origin:', req.headers.origin);
+    console.log('[CREATE-ORDER] Body:', JSON.stringify(req.body, null, 2));
     
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body || {};
 
@@ -240,7 +230,6 @@ app.post('/api/payment-callback', async (req, res) => {
             }
         }
 
-        // If we still can't find it, log and acknowledge to prevent gateway retries
         if (!ref) {
             console.error('[CALLBACK] Order not found for incoming payload.');
             return res.status(200).send('OK');
@@ -272,7 +261,6 @@ app.post('/api/payment-callback', async (req, res) => {
 
         console.log(`[UPDATED] Order ${ref.id} → ${isSuccess ? 'PAID' : 'CANCELLED'} (Reason: ${reason})`);
 
-        // Trigger email if successful
         if (isSuccess) {
             sendConfirmationEmail(orderDoc, ref.id, ref).catch(console.error);
         }
@@ -281,7 +269,6 @@ app.post('/api/payment-callback', async (req, res) => {
         console.error('[DB UPDATE ERROR]', e.message);
     }
 
-    // Always return 200 OK so the payment gateway stops retrying
     res.status(200).send('OK');
 });
 
