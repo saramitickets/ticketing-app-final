@@ -2,6 +2,7 @@
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
 // FIXED: Mapped InfinitiPay's nested `results.merchantTxnId` and `statusCode`
 // ADDED: Professional HTML Email Receipt Integration via Brevo
+// ADDED: promptDisplayAccount for custom M-Pesa prompt naming
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -218,7 +219,8 @@ app.post('/api/create-order', async (req, res) => {
             payerAccount: formattedPhone,
             narration: `Sarami Lens: ${payerName}`,
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
-            ptyId: 1
+            ptyId: 1,
+            promptDisplayAccount: "Sarami Events" // <--- ADDED HERE
         };
 
         console.log('[STK PAYLOAD]', JSON.stringify(payload, null, 2));
