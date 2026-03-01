@@ -1,6 +1,7 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
 // FIXED: Mapped InfinitiPay's nested `results.merchantTxnId` and `statusCode`
+// ADDED: Professional HTML Email Receipt Integration via Brevo
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -95,12 +96,87 @@ async function getAuthToken() {
     }
 }
 
+// ─── CREATIVE EMAIL FUNCTION ───
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
-        // ... your Brevo / Sendinblue email sending code ...
+        console.log(`[EMAIL] Preparing to send confirmation to ${orderData.payerEmail}`);
+
+        const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+        const eventTitle = orderData.eventName || 'Sarami Lens Exhibition';
+        
+        sendSmtpEmail.subject = `Ticket Confirmed: ${eventTitle}`;
+        
+        // Professional HTML Template
+        sendSmtpEmail.htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 20px;">
+                <tr>
+                    <td align="center">
+                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                            <tr>
+                                <td style="background-color: #111111; padding: 40px 20px; text-align: center;">
+                                    <h1 style="color: #d4af37; margin: 0; font-size: 28px; letter-spacing: 2px; text-transform: uppercase;">SARAMI LENS</h1>
+                                    <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px; opacity: 0.8;">EXHIBITION & AWARDS</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 40px 30px;">
+                                    <h2 style="color: #333333; margin-top: 0; font-size: 24px;">Payment Received! 🎉</h2>
+                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">Hello <strong>${orderData.payerName}</strong>,</p>
+                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">This email confirms that we have successfully received your payment for the <strong>${eventTitle}</strong>. We are thrilled to have you join us!</p>
+                                    
+                                    <div style="background-color: #f9f9f9; border-left: 4px solid #d4af37; padding: 20px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                                        <h3 style="margin-top: 0; color: #111111; font-size: 18px; border-bottom: 1px solid #eeeeee; padding-bottom: 10px;">Transaction Details</h3>
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 15px; color: #444444;">
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Amount Paid:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">KES ${orderData.amount}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>M-Pesa Receipt:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">${orderData.mpesaReceipt || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Order ID:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">${orderId}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Status:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right; color: #2e7d32; font-weight: bold;">PAID</td>
+                                            </tr>
+                                        </table>
+                                    </div>
+
+                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">Please keep this email as your official receipt and proof of registration. Present it at the entrance on the day of the event.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="background-color: #111111; padding: 30px 20px; text-align: center;">
+                                    <p style="color: #aaaaaa; font-size: 14px; margin: 0;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
+                                    <p style="color: #777777; font-size: 12px; margin: 10px 0 0 0;">Need help? Reply to this email or contact us at etickets@saramievents.co.ke</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        `;
+        
+        // Sender and Recipient Configuration
+        sendSmtpEmail.sender = { "name": "Sarami Events", "email": "etickets@saramievents.co.ke" }; 
+        sendSmtpEmail.replyTo = { "email": "etickets@saramievents.co.ke", "name": "Sarami Events" };
+        sendSmtpEmail.to = [{ "email": orderData.payerEmail, "name": orderData.payerName }];
+
+        await apiInstance.sendTransacEmail(sendSmtpEmail);
+        console.log(`[EMAIL] Successfully sent to ${orderData.payerEmail}`);
+
         await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     } catch (err) {
-        console.error('[EMAIL FAIL]', err.message);
+        console.error('[EMAIL FAIL]', err.response?.text || err.message);
         await orderRef.update({ emailStatus: 'FAILED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     }
 }
@@ -182,19 +258,16 @@ app.post('/api/payment-callback', async (req, res) => {
 
     let data = req.body || {};
     
-    // Safaricom standard wrapper
     if (data.Body?.stkCallback) {
         data = data.Body.stkCallback; 
     }
 
-    // InfinitiPay standard wrapper
     const resultsObj = data.results || {}; 
 
     try {
         let orderDoc = null;
         let ref = null;
 
-        // 1. Try to find by exact Firestore Document ID first
         const docId = data.transactionReference || data.reference || resultsObj.transactionReference;
         if (docId && typeof docId === 'string') {
             const docSnap = await db.collection('orders').doc(docId).get();
@@ -205,10 +278,9 @@ app.post('/api/payment-callback', async (req, res) => {
             }
         }
 
-        // 2. Fallback: Look up by merchantRequestID (TXN-xxxx)
         if (!ref) {
             const possibleIds = [
-                resultsObj.merchantTxnId, // <-- InfinitiPay specifically uses this!
+                resultsObj.merchantTxnId, 
                 data.merchantRequestId, data.MerchantRequestID, data.merchantRequestID,
                 data.checkoutRequestId, data.CheckoutRequestID,
                 data.transactionId, data.TransactionId, resultsObj.transactionId
@@ -235,11 +307,9 @@ app.post('/api/payment-callback', async (req, res) => {
             return res.status(200).send('OK');
         }
 
-        // Determine Success
         const resultCode = data.statusCode ?? data.ResultCode ?? data.resultCode;
         const statusStr = (data.status || data.Status || '').toUpperCase();
         
-        // HTTP 200 or 0 usually means success
         const isSuccess = 
             resultCode === 0 || 
             resultCode === '0' || 
@@ -251,13 +321,11 @@ app.post('/api/payment-callback', async (req, res) => {
 
         const reason = data.message || data.ResultDesc || data.resultDesc || data.ResultDescription || 'No reason provided';
         
-        // Grab Mpesa Receipt (InfinitiPay uses mnoRef, but it might be "0" on failure)
         let receipt = 'N/A';
         if (resultsObj.mnoRef && resultsObj.mnoRef !== "0") receipt = resultsObj.mnoRef;
         else if (data.MpesaReceiptNumber) receipt = data.MpesaReceiptNumber;
         else if (data.receiptNumber) receipt = data.receiptNumber;
 
-        // Update Database
         await ref.update({
             status: isSuccess ? 'PAID' : 'CANCELLED',
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
@@ -270,6 +338,7 @@ app.post('/api/payment-callback', async (req, res) => {
 
         console.log(`[UPDATED] Order ${ref.id} → ${isSuccess ? 'PAID' : 'CANCELLED'} (Reason: ${reason})`);
 
+        // Trigger the creative email on successful payment
         if (isSuccess) {
             sendConfirmationEmail(orderDoc, ref.id, ref).catch(console.error);
         }
