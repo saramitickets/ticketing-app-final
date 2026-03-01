@@ -1,7 +1,7 @@
 // ==========================================
 // THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: charset, create-order logging, phone format, CORS for null + preflight, Render deploy (0.0.0.0 + /health)
-// IMPROVED: more robust CORS with logging + explicit OPTIONS, better callback parsing
+// FIXED: Callback lookup logic, broader success status checks
+// IMPROVED: Direct Document ID querying for faster, reliable lookups
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -40,7 +40,6 @@ app.use((req, res, next) => {
 
   console.log(`[CORS] Request from origin: ${origin} | Method: ${req.method} | Path: ${req.path}`);
 
-  // Allow during dev: null + common local dev origins
   const allowedPatterns = [
     'null',
     'http://localhost',
@@ -48,11 +47,10 @@ app.use((req, res, next) => {
     'https://localhost',
   ];
 
-  let corsOrigin = '*'; // fallback (can be tightened in production)
+  let corsOrigin = '*'; 
 
-  // Check if origin matches any allowed pattern
   if (origin === 'null' || allowedPatterns.some(pattern => origin?.startsWith(pattern))) {
-    corsOrigin = origin === 'null' ? '*' : origin;  // browsers accept * even for null in many cases
+    corsOrigin = origin === 'null' ? '*' : origin;  
   }
 
   res.setHeader('Access-Control-Allow-Origin', corsOrigin);
@@ -125,7 +123,6 @@ async function getAuthToken() {
     }
 }
 
-// Email function (placeholder - implement your real email logic here)
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
         // ... your Brevo / Sendinblue email sending code ...
@@ -136,12 +133,10 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
     }
 }
 
-// ─── CREATE ORDER ─── (with extra logging)
+// ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
     console.log('[CREATE-ORDER] Incoming request from origin:', req.headers.origin);
-    console.log('[CREATE-ORDER] Headers:', req.headers);
-    console.log('[CREATE-ORDER] Body:', JSON.stringify(req.body, null, 2));
-
+    
     const { payerName, payerEmail, payerPhone, amount, eventName } = req.body || {};
 
     if (!payerName || !payerEmail || !payerPhone || !amount) {
@@ -196,7 +191,7 @@ app.post('/api/create-order', async (req, res) => {
 
         res.status(200).json({ success: true, orderId: orderRef.id });
     } catch (err) {
-        console.error('[CREATE-ORDER ERROR]', err.message, err.stack?.substring(0, 300));
+        console.error('[CREATE-ORDER ERROR]', err.message);
         const errMsg = err.response?.data || err.message || 'Unknown error';
         if (orderRef) {
             await orderRef.update({
@@ -211,68 +206,94 @@ app.post('/api/create-order', async (req, res) => {
 
 // ─── CALLBACK ───
 app.post('/api/payment-callback', async (req, res) => {
-    console.log('[CALLBACK] Headers:', req.headers);
     console.log('[CALLBACK] Parsed Body:', JSON.stringify(req.body, null, 2));
 
     let data = req.body || {};
     if (data.Body?.stkCallback) {
-        data = data.Body.stkCallback;
+        data = data.Body.stkCallback; // Unwrap standard Safaricom callback
     }
-
-    const possibleIds = [
-        data.transactionId, data.TransactionId,
-        data.merchantRequestId, data.MerchantRequestID, data.merchantRequestID,
-        data.checkoutRequestId, data.CheckoutRequestID,
-        data.reference, data.transactionReference
-    ];
-
-    const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim());
-
-    if (!mReqId) {
-        console.error('[CALLBACK] No valid ID found. Keys:', Object.keys(data));
-        return res.status(200).send('OK');
-    }
-
-    console.log('[CALLBACK] Found merchant ID:', mReqId);
-
-    const resultCode = data.ResultCode ?? data.resultCode ?? -1;
-    const isSuccess = resultCode === 0 || resultCode === '0' || String(resultCode) === '0';
-
-    const reason = data.ResultDesc || data.resultDesc || data.message || data.ResultDescription || 'No reason provided';
 
     try {
-        const snap = await db.collection('orders')
-            .where('merchantRequestID', '==', mReqId)
-            .limit(1)
-            .get();
+        let orderDoc = null;
+        let ref = null;
 
-        if (snap.empty) {
-            console.log('[CALLBACK] Order not found for ID:', mReqId);
+        // 1. Try to find by exact Firestore Document ID first
+        const docId = data.transactionReference || data.reference;
+        if (docId && typeof docId === 'string') {
+            const docSnap = await db.collection('orders').doc(docId).get();
+            if (docSnap.exists) {
+                orderDoc = docSnap.data();
+                ref = docSnap.ref;
+                console.log('[CALLBACK] Found order by Document ID:', docSnap.id);
+            }
+        }
+
+        // 2. Fallback: Try to find by merchantRequestID if Document ID lookup failed
+        if (!ref) {
+            const possibleIds = [
+                data.transactionId, data.TransactionId,
+                data.merchantRequestId, data.MerchantRequestID, data.merchantRequestID,
+                data.checkoutRequestId, data.CheckoutRequestID
+            ];
+            
+            const mReqId = possibleIds.find(id => id && typeof id === 'string' && id.trim());
+            
+            if (mReqId) {
+                const snap = await db.collection('orders')
+                    .where('merchantRequestID', '==', mReqId)
+                    .limit(1)
+                    .get();
+
+                if (!snap.empty) {
+                    ref = snap.docs[0].ref;
+                    orderDoc = snap.docs[0].data();
+                    console.log('[CALLBACK] Found order by merchantRequestID:', mReqId);
+                }
+            }
+        }
+
+        // If we still can't find it, log and acknowledge to prevent gateway retries
+        if (!ref) {
+            console.error('[CALLBACK] Order not found for incoming payload.');
             return res.status(200).send('OK');
         }
 
-        const doc = snap.docs[0];
-        const ref = doc.ref;
+        // Determine Success via multiple common gateway fields
+        const resultCode = data.ResultCode ?? data.resultCode ?? data.statusCode;
+        const statusStr = (data.status || data.Status || '').toUpperCase();
+        
+        const isSuccess = 
+            resultCode === 0 || 
+            resultCode === '0' || 
+            statusStr === 'SUCCESS' || 
+            statusStr === 'COMPLETED' || 
+            statusStr === 'PAID';
 
+        const reason = data.ResultDesc || data.resultDesc || data.message || data.ResultDescription || 'No reason provided';
+
+        // Update Database
         await ref.update({
             status: isSuccess ? 'PAID' : 'CANCELLED',
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
             reason: reason,
-            mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || 'N/A',
+            mpesaReceipt: data.MpesaReceiptNumber || data.receiptNumber || data.transactionId || 'N/A',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             rawCallback: data,
-            resultCode: resultCode
+            resultCode: resultCode || statusStr || -1
         });
 
-        console.log(`[UPDATED] Order ${doc.id} → ${isSuccess ? 'PAID' : 'CANCELLED'} (Reason: ${reason})`);
+        console.log(`[UPDATED] Order ${ref.id} → ${isSuccess ? 'PAID' : 'CANCELLED'} (Reason: ${reason})`);
 
+        // Trigger email if successful
         if (isSuccess) {
-            sendConfirmationEmail(doc.data(), doc.id, ref).catch(console.error);
+            sendConfirmationEmail(orderDoc, ref.id, ref).catch(console.error);
         }
+
     } catch (e) {
         console.error('[DB UPDATE ERROR]', e.message);
     }
 
+    // Always return 200 OK so the payment gateway stops retrying
     res.status(200).send('OK');
 });
 
