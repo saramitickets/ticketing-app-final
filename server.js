@@ -1,8 +1,7 @@
 // ==========================================
-// THE SARAMI LENS 2026 - PRODUCTION BACKEND
-// FIXED: Mapped InfinitiPay's nested `results.merchantTxnId` and `statusCode`
-// ADDED: Professional HTML Email Receipt Integration via Brevo
-// ADDED: promptDisplayAccount for custom M-Pesa prompt naming
+// SARAMI EVENTS - PRODUCTION BACKEND
+// EVENT: District Governor's Banquet 2026
+// VENUE: Ole Sereni Hotel
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -97,66 +96,81 @@ async function getAuthToken() {
     }
 }
 
-// ─── CREATIVE EMAIL FUNCTION ───
+// ─── CREATIVE EMAIL FUNCTION (UPDATED FOR DG BANQUET) ───
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
         console.log(`[EMAIL] Preparing to send confirmation to ${orderData.payerEmail}`);
 
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-        const eventTitle = orderData.eventName || 'Sarami Lens Exhibition';
+        const eventTitle = orderData.eventName || "District Governor's Banquet";
         
         sendSmtpEmail.subject = `Ticket Confirmed: ${eventTitle}`;
         
-        // Professional HTML Template
+        // Professional HTML Template - Lions Blue & Gold Theme
         sendSmtpEmail.htmlContent = `
         <!DOCTYPE html>
         <html>
-        <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 20px;">
+        <body style="margin: 0; padding: 0; background-color: #f6f8fd; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f6f8fd; padding: 20px;">
                 <tr>
                     <td align="center">
-                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,51,141,0.1); border: 1px solid #e2e8f0;">
+                            
                             <tr>
-                                <td style="background-color: #111111; padding: 40px 20px; text-align: center;">
-                                    <h1 style="color: #d4af37; margin: 0; font-size: 28px; letter-spacing: 2px; text-transform: uppercase;">SARAMI LENS</h1>
-                                    <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px; opacity: 0.8;">EXHIBITION & AWARDS</p>
+                                <td style="background-color: #00338D; padding: 40px 20px; text-align: center; border-bottom: 4px solid #F2A900;">
+                                    <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 2px; text-transform: uppercase;">SARAMI EVENTS</h1>
+                                    <p style="color: #F2A900; margin: 10px 0 0 0; font-size: 14px; font-weight: bold; letter-spacing: 1px;">DISTRICT GOVERNOR'S BANQUET 2026</p>
                                 </td>
                             </tr>
+                            
                             <tr>
                                 <td style="padding: 40px 30px;">
-                                    <h2 style="color: #333333; margin-top: 0; font-size: 24px;">Payment Received! 🎉</h2>
-                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">Hello <strong>${orderData.payerName}</strong>,</p>
-                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">This email confirms that we have successfully received your payment for the <strong>${eventTitle}</strong>. We are thrilled to have you join us!</p>
+                                    <h2 style="color: #1e293b; margin-top: 0; font-size: 24px;">Your Seat is Reserved! 🎉</h2>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.6;">Dear <strong>${orderData.payerName}</strong>,</p>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.6;">Thank you for your booking. We have successfully received your payment for the <strong>${eventTitle}</strong>. We look forward to hosting you for an evening of elegance and fellowship.</p>
                                     
-                                    <div style="background-color: #f9f9f9; border-left: 4px solid #d4af37; padding: 20px; margin: 30px 0; border-radius: 0 8px 8px 0;">
-                                        <h3 style="margin-top: 0; color: #111111; font-size: 18px; border-bottom: 1px solid #eeeeee; padding-bottom: 10px;">Transaction Details</h3>
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 15px; color: #444444;">
+                                    <div style="background-color: #f8fafc; border-left: 4px solid #00338D; padding: 20px; margin: 30px 0; border-radius: 0 8px 8px 0; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+                                        <h3 style="margin-top: 0; color: #00338D; font-size: 18px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">E-Ticket Details</h3>
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 15px; color: #334155;">
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Venue:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right; font-weight: bold; color: #00338D;">Ole Sereni Hotel</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Ticket Type:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">${orderData.packageTier} Ticket</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Quantity:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">${orderData.quantity}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;"><strong>Dietary Preference:</strong></td>
+                                                <td style="padding: 8px 0; text-align: right;">${orderData.dietaryPreference || 'None'}</td>
+                                            </tr>
                                             <tr>
                                                 <td style="padding: 8px 0;"><strong>Amount Paid:</strong></td>
-                                                <td style="padding: 8px 0; text-align: right;">KES ${orderData.amount}</td>
+                                                <td style="padding: 8px 0; text-align: right;">KES ${orderData.amount.toLocaleString()}</td>
                                             </tr>
                                             <tr>
                                                 <td style="padding: 8px 0;"><strong>M-Pesa Receipt:</strong></td>
                                                 <td style="padding: 8px 0; text-align: right;">${orderData.mpesaReceipt || 'N/A'}</td>
                                             </tr>
                                             <tr>
-                                                <td style="padding: 8px 0;"><strong>Order ID:</strong></td>
-                                                <td style="padding: 8px 0; text-align: right;">${orderId}</td>
-                                            </tr>
-                                            <tr>
                                                 <td style="padding: 8px 0;"><strong>Status:</strong></td>
-                                                <td style="padding: 8px 0; text-align: right; color: #2e7d32; font-weight: bold;">PAID</td>
+                                                <td style="padding: 8px 0; text-align: right; color: #16a34a; font-weight: bold;">PAID</td>
                                             </tr>
                                         </table>
                                     </div>
 
-                                    <p style="color: #555555; font-size: 16px; line-height: 1.6;">Please keep this email as your official receipt and proof of registration. Present it at the entrance on the day of the event.</p>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.6; background-color: #fffbeb; padding: 15px; border-radius: 8px; border: 1px solid #fef3c7;"><strong>Note:</strong> Please keep this email as your official digital pass. Have it ready on your phone for scanning at the Ole Sereni Hotel entrance.</p>
                                 </td>
                             </tr>
+                            
                             <tr>
-                                <td style="background-color: #111111; padding: 30px 20px; text-align: center;">
-                                    <p style="color: #aaaaaa; font-size: 14px; margin: 0;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
-                                    <p style="color: #777777; font-size: 12px; margin: 10px 0 0 0;">Need help? Reply to this email or contact us at etickets@saramievents.co.ke</p>
+                                <td style="background-color: #0f1115; padding: 30px 20px; text-align: center;">
+                                    <p style="color: #94a3b8; font-size: 14px; margin: 0;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
+                                    <p style="color: #64748b; font-size: 12px; margin: 10px 0 0 0;">Need support? Reply to this email or contact us at etickets@saramievents.co.ke</p>
                                 </td>
                             </tr>
                         </table>
@@ -169,7 +183,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
         
         // Sender and Recipient Configuration
         sendSmtpEmail.sender = { "name": "Sarami Events", "email": "etickets@saramievents.co.ke" }; 
-        sendSmtpEmail.replyTo = { "email": "etickets@saramievents.co.ke", "name": "Sarami Events" };
+        sendSmtpEmail.replyTo = { "email": "etickets@saramievents.co.ke", "name": "Sarami Events Support" };
         sendSmtpEmail.to = [{ "email": orderData.payerEmail, "name": orderData.payerName }];
 
         await apiInstance.sendTransacEmail(sendSmtpEmail);
@@ -186,7 +200,8 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
 app.post('/api/create-order', async (req, res) => {
     console.log('[CREATE-ORDER] Body:', JSON.stringify(req.body, null, 2));
     
-    const { payerName, payerEmail, payerPhone, amount, eventName } = req.body || {};
+    // Updated to extract new frontend fields
+    const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference } = req.body || {};
 
     if (!payerName || !payerEmail || !payerPhone || !amount) {
         return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -199,7 +214,10 @@ app.post('/api/create-order', async (req, res) => {
             payerEmail,
             payerPhone,
             amount: Number(amount),
-            eventName: eventName || 'Sarami Lens 2026',
+            quantity: Number(quantity) || 1,
+            packageTier: packageTier || 'LIONS',
+            dietaryPreference: dietaryPreference || 'None',
+            eventName: eventName || "District Governor's Banquet 2026",
             status: 'INITIATED',
             emailStatus: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -217,10 +235,10 @@ app.post('/api/create-order', async (req, res) => {
             merchantId: "139",
             transactionTypeId: 1,
             payerAccount: formattedPhone,
-            narration: `Sarami Lens: ${payerName}`,
+            narration: `DG Banquet: ${payerName}`, // Updated Narration
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1,
-            promptDisplayAccount: "Sarami Events" // <--- ADDED HERE
+            promptDisplayAccount: "Sarami Events" 
         };
 
         console.log('[STK PAYLOAD]', JSON.stringify(payload, null, 2));
