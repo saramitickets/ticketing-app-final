@@ -1,14 +1,13 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // EVENT: District Governor's Banquet 2026
-// ADDED: QR Code Generation & VIP Ticket Design
+// ADDED: Live QR Codes & Dedicated Web Ticket Download
 // ==========================================
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
-const QRCode = require('qrcode'); // <-- NEW: Required for generating ticket QR codes
 
 let db;
 try {
@@ -30,41 +29,27 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
 
-// ─── Health check for Render ───
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', uptime: process.uptime() });
-});
+// ─── Middleware ───
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok', uptime: process.uptime() }));
 
-// ─── Bulletproof CORS Middleware ───
 app.use((req, res, next) => {
   const origin = req.headers.origin || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
-// ─── Safe Body Parsers ───
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.text({ type: 'text/plain' })); 
 
-// ─── Callback JSON Converter ───
 app.use((req, res, next) => {
   if (req.method === 'POST') {
-      const contentType = (req.headers['content-type'] || '').toLowerCase();
-      
       if (typeof req.body === 'string') {
-          try {
-              req.body = JSON.parse(req.body.trim());
-          } catch (e) {
-              // Not valid JSON, leave it as a text string
-          }
+          try { req.body = JSON.parse(req.body.trim()); } catch (e) { }
       }
   }
   next();
@@ -87,7 +72,6 @@ async function getAuthToken() {
         }, { timeout: 10000 });
         return res.data.access_token;
     } catch (err) {
-        console.error('[AUTH FAIL]', err.message);
         throw err;
     }
 }
@@ -97,8 +81,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
         console.log(`[EMAIL] Generating VIP Ticket for ${orderData.payerEmail}`);
 
-        // 1. Generate unique QR Code data payload
-        // This is what shows up if you scan it with a phone camera/scanner app
+        // 1. Generate Live QR Code URL (Bypasses Gmail Security Filters)
         const qrPayload = JSON.stringify({
             ticketID: orderId,
             name: orderData.payerName,
@@ -106,110 +89,84 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
             qty: orderData.quantity,
             status: "PAID"
         });
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrPayload)}&color=00338D`;
 
-        // 2. Create the visual QR code image (Base64)
-        const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-            color: { dark: '#00338D', light: '#ffffff' }, // Lions Blue QR
-            width: 250,
-            margin: 1
-        });
+        // 2. The Download Link (Points to our new backend route)
+        const downloadLink = `https://ticketing-app-final.onrender.com/api/ticket/${orderId}`;
 
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
         const eventTitle = orderData.eventName || "District Governor's Banquet";
         
-        sendSmtpEmail.subject = `🎫 Your Ticket: ${eventTitle}`;
+        sendSmtpEmail.subject = `🎫 Your VIP Pass: ${eventTitle}`;
         
-        // 3. High-End Ticket HTML Template
+        // 3. Ultra-Premium Email Template
         sendSmtpEmail.htmlContent = `
         <!DOCTYPE html>
         <html>
-        <body style="margin: 0; padding: 0; background-color: #e2e8f0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #e2e8f0; padding: 40px 20px;">
+        <body style="margin: 0; padding: 0; background-color: #050a15; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #050a15; padding: 40px 20px;">
                 <tr>
                     <td align="center">
-                        
-                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 15px 35px rgba(0,0,0,0.15); max-width: 600px; width: 100%;">
+                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(242,169,0,0.15); max-width: 600px; width: 100%;">
                             
                             <tr>
-                                <td style="background-color: #00338D; padding: 35px 20px; text-align: center; position: relative;">
-                                    <h1 style="color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 3px; text-transform: uppercase; font-weight: 800;">SARAMI EVENTS</h1>
-                                    <p style="color: #F2A900; margin: 8px 0 0 0; font-size: 13px; font-weight: bold; letter-spacing: 2px;">DISTRICT GOVERNOR'S BANQUET 2026</p>
+                                <td style="background: linear-gradient(135deg, #001f5b, #00338D); padding: 40px 20px; text-align: center; border-bottom: 5px solid #F2A900;">
+                                    <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900;">SARAMI</h1>
+                                    <p style="color: #F2A900; margin: 5px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 3px;">DISTRICT GOVERNOR'S BANQUET</p>
                                 </td>
                             </tr>
                             
                             <tr>
-                                <td align="center" style="padding: 40px 20px 20px 20px;">
-                                    <div style="border: 4px solid #f1f5f9; padding: 15px; border-radius: 12px; display: inline-block;">
-                                        <img src="${qrDataUrl}" width="200" height="200" alt="Scan Ticket" style="display: block; border-radius: 8px;">
-                                    </div>
-                                    <p style="margin: 15px 0 0 0; font-family: monospace; font-size: 14px; color: #94a3b8; letter-spacing: 2px;">TICKET #${orderId.substring(0,8).toUpperCase()}</p>
-                                    <p style="margin: 5px 0 0 0; color: #16a34a; font-weight: bold; font-size: 14px;">✓ PAYMENT VERIFIED</p>
+                                <td align="center" style="padding: 40px 30px 20px 30px;">
+                                    <h2 style="color: #00338D; margin-top: 0; font-size: 24px;">Payment Confirmed!</h2>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">Hello <strong>${orderData.payerName}</strong>, your seat at the Ole Sereni Hotel is officially secured.</p>
+                                    
+                                    <a href="${downloadLink}" style="display: inline-block; background: linear-gradient(135deg, #F2A900, #d97706); color: #000000; font-size: 18px; font-weight: bold; text-decoration: none; padding: 18px 40px; border-radius: 50px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 10px 20px rgba(242,169,0,0.3);">
+                                        ⬇ Download VIP Pass
+                                    </a>
+                                    <p style="font-size: 12px; color: #94a3b8; margin-top: 15px;">Click above to save your ticket to your device.</p>
                                 </td>
                             </tr>
 
-                            <tr>
-                                <td style="padding: 0 20px;">
-                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                        <tr>
-                                            <td width="20" height="40">
-                                                <div style="width: 40px; height: 40px; background-color: #e2e8f0; border-radius: 50%; margin-left: -40px;"></div>
-                                            </td>
-                                            <td style="border-top: 3px dashed #cbd5e1; height: 1px;"></td>
-                                            <td width="20" height="40">
-                                                <div style="width: 40px; height: 40px; background-color: #e2e8f0; border-radius: 50%; margin-right: -40px;"></div>
-                                            </td>
-                                        </tr>
-                                    </table>
-                                </td>
-                            </tr>
-                            
                             <tr>
                                 <td style="padding: 20px 40px 40px 40px;">
-                                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 25px;">
-                                        <tr>
-                                            <td style="padding-bottom: 15px;">
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Admit To</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 20px; color: #0f172a; font-weight: bold;">${orderData.payerName}</p>
-                                            </td>
-                                            <td align="right" style="padding-bottom: 15px;">
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Membership Tier</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 20px; color: #00338D; font-weight: bold;">${orderData.packageTier}</p>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding-bottom: 15px;">
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Date & Time</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 16px; color: #334155; font-weight: 600;">July 18th, 2026</p>
-                                            </td>
-                                            <td align="right" style="padding-bottom: 15px;">
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Location</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 16px; color: #334155; font-weight: 600;">Ole Sereni Hotel</p>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td>
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Guests (Qty)</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 16px; color: #334155; font-weight: 600;">${orderData.quantity}</p>
-                                            </td>
-                                            <td align="right">
-                                                <p style="margin: 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Dietary Pref.</p>
-                                                <p style="margin: 5px 0 0 0; font-size: 16px; color: #334155; font-weight: 600;">${orderData.dietaryPreference || 'None'}</p>
-                                            </td>
-                                        </tr>
-                                    </table>
+                                    <div style="border: 2px dashed #cbd5e1; border-radius: 16px; padding: 30px; text-align: center; background-color: #f8fafc;">
+                                        <p style="margin: 0 0 20px 0; font-size: 14px; font-weight: bold; color: #00338D; text-transform: uppercase; letter-spacing: 2px;">Ticket Preview</p>
+                                        
+                                        <img src="${qrImageUrl}" width="180" height="180" alt="Your QR Code" style="display: block; margin: 0 auto; border-radius: 8px;">
+                                        
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 25px; text-align: left;">
+                                            <tr>
+                                                <td style="padding-bottom: 10px;">
+                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Ticket Type</p>
+                                                    <p style="margin: 2px 0 0 0; font-size: 16px; color: #0f172a; font-weight: bold;">${orderData.packageTier}</p>
+                                                </td>
+                                                <td align="right" style="padding-bottom: 10px;">
+                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Admit</p>
+                                                    <p style="margin: 2px 0 0 0; font-size: 16px; color: #0f172a; font-weight: bold;">${orderData.quantity} Guest(s)</p>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Amount</p>
+                                                    <p style="margin: 2px 0 0 0; font-size: 16px; color: #16a34a; font-weight: bold;">KES ${orderData.amount.toLocaleString()}</p>
+                                                </td>
+                                                <td align="right">
+                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Dietary</p>
+                                                    <p style="margin: 2px 0 0 0; font-size: 16px; color: #0f172a; font-weight: bold;">${orderData.dietaryPreference || 'None'}</p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </div>
                                 </td>
                             </tr>
-                        </table>
-
-                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px; max-width: 600px; width: 100%;">
+                            
                             <tr>
-                                <td align="center">
-                                    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">Have this ticket ready on your phone for scanning at the door.</p>
-                                    <p style="color: #94a3b8; font-size: 12px; margin: 0;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
+                                <td style="background-color: #f1f5f9; padding: 25px 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                                    <p style="color: #64748b; font-size: 12px; margin: 0;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
                                 </td>
                             </tr>
                         </table>
-
                     </td>
                 </tr>
             </table>
@@ -222,7 +179,6 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
         sendSmtpEmail.replyTo = { "email": "etickets@saramievents.co.ke", "name": "Sarami Events Support" };
         sendSmtpEmail.to = [{ "email": orderData.payerEmail, "name": orderData.payerName }];
 
-        // 4. Send the Email
         await apiInstance.sendTransacEmail(sendSmtpEmail);
         console.log(`[EMAIL] VIP Ticket successfully sent to ${orderData.payerEmail}`);
 
@@ -232,6 +188,103 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
         await orderRef.update({ emailStatus: 'FAILED', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     }
 }
+
+// ─── NEW: WEB TICKET DOWNLOAD ENDPOINT ───
+// This generates a beautiful webpage that the user can instantly print or save as PDF
+app.get('/api/ticket/:orderId', async (req, res) => {
+    try {
+        const doc = await db.collection('orders').doc(req.params.orderId).get();
+        if (!doc.exists) return res.status(404).send('<h1>Ticket Not Found</h1>');
+        
+        const orderData = doc.data();
+        
+        // Ensure ticket is PAID before showing
+        if (orderData.status !== 'PAID') {
+            return res.status(403).send('<h1>Payment for this ticket is pending or failed.</h1>');
+        }
+
+        const qrPayload = JSON.stringify({
+            ticketID: req.params.orderId,
+            name: orderData.payerName,
+            tier: orderData.packageTier,
+            qty: orderData.quantity
+        });
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrPayload)}&color=00338D`;
+
+        // Render Web Ticket HTML
+        const html = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>VIP Ticket - ${orderData.payerName}</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;900&display=swap" rel="stylesheet">
+            <style>
+                body { font-family: 'Montserrat', sans-serif; background-color: #f1f5f9; }
+                .print-btn { display: block; }
+                @media print {
+                    .print-btn { display: none !important; }
+                    body { background-color: white; }
+                    .ticket-container { box-shadow: none !important; }
+                }
+            </style>
+        </head>
+        <body class="flex flex-col items-center justify-center min-h-screen p-4">
+            
+            <div class="mb-6 print-btn">
+                <button onclick="window.print()" class="bg-gradient-to-r from-yellow-500 to-yellow-600 text-black font-bold uppercase tracking-widest px-8 py-4 rounded-full shadow-xl hover:scale-105 transition transform">
+                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Save as PDF / Print
+                </button>
+            </div>
+
+            <div class="ticket-container bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-200">
+                <div class="bg-[#00338D] p-8 text-center border-b-8 border-[#F2A900]">
+                    <h1 class="text-3xl font-black text-white tracking-widest uppercase">SARAMI</h1>
+                    <p class="text-[#F2A900] text-xs font-bold tracking-[0.2em] mt-1">Governor's Banquet 2026</p>
+                </div>
+                
+                <div class="p-8 text-center bg-blue-50">
+                    <img src="${qrImageUrl}" alt="QR Code" class="w-48 h-48 mx-auto rounded-xl shadow-sm border-4 border-white">
+                    <p class="mt-4 text-xs font-mono text-gray-500 tracking-widest">ID: ${req.params.orderId.substring(0,10).toUpperCase()}</p>
+                </div>
+
+                <div class="p-8 bg-white">
+                    <div class="grid grid-cols-2 gap-y-6 gap-x-4 text-left">
+                        <div>
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Admit To</p>
+                            <p class="text-lg font-bold text-gray-900">${orderData.payerName}</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Ticket Tier</p>
+                            <p class="text-lg font-bold text-[#00338D]">${orderData.packageTier}</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Guests</p>
+                            <p class="text-lg font-bold text-gray-900">${orderData.quantity}</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Dietary</p>
+                            <p class="text-lg font-bold text-gray-900">${orderData.dietaryPreference || 'None'}</p>
+                        </div>
+                        <div class="col-span-2 border-t border-gray-100 pt-4 mt-2">
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Venue & Time</p>
+                            <p class="text-md font-bold text-gray-900">Ole Sereni Hotel • July 18th, 2026</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </body>
+        </html>
+        `;
+        res.send(html);
+    } catch (e) {
+        res.status(500).send('Error loading ticket.');
+    }
+});
 
 // ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
@@ -365,7 +418,6 @@ app.post('/api/payment-callback', async (req, res) => {
             resultCode: resultCode || statusStr || -1
         });
 
-        // Trigger the VIP email on successful payment
         if (isSuccess) {
             sendConfirmationEmail(orderDoc, ref.id, ref).catch(console.error);
         }
