@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // EVENT: District Governor's Banquet 2026
-// ADDED: Live QR Codes & Dedicated Web Ticket Download
+// FEATURES: M-Pesa STK, VIP E-Tickets, Live Stats
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -9,6 +9,7 @@ require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
+// Initialize Firebase
 let db;
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -21,6 +22,7 @@ try {
     console.error("❌ Firebase init failed:", error);
 }
 
+// Initialize Brevo (Email)
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
@@ -91,7 +93,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
         });
         const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrPayload)}&color=00338D`;
 
-        // 2. The Download Link (Points to our new backend route)
+        // 2. The Download Link
         const downloadLink = `https://ticketing-app-final.onrender.com/api/ticket/${orderId}`;
 
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
@@ -112,7 +114,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
                             <tr>
                                 <td style="background: linear-gradient(135deg, #001f5b, #00338D); padding: 40px 20px; text-align: center; border-bottom: 5px solid #F2A900;">
                                     <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900;">SARAMI</h1>
-                                    <p style="color: #F2A900; margin: 5px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 3px;">DISTRICT GOVERNOR'S BANQUET</p>
+                                    <p style="color: #F2A900; margin: 5px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 3px;">DISTRICT GOVERNOR'S BANQUET 2026</p>
                                 </td>
                             </tr>
                             
@@ -189,8 +191,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
     }
 }
 
-// ─── NEW: WEB TICKET DOWNLOAD ENDPOINT ───
-// This generates a beautiful webpage that the user can instantly print or save as PDF
+// ─── WEB TICKET DOWNLOAD ENDPOINT ───
 app.get('/api/ticket/:orderId', async (req, res) => {
     try {
         const doc = await db.collection('orders').doc(req.params.orderId).get();
@@ -198,7 +199,6 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         
         const orderData = doc.data();
         
-        // Ensure ticket is PAID before showing
         if (orderData.status !== 'PAID') {
             return res.status(403).send('<h1>Payment for this ticket is pending or failed.</h1>');
         }
@@ -211,7 +211,6 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         });
         const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrPayload)}&color=00338D`;
 
-        // Render Web Ticket HTML
         const html = `
         <!DOCTYPE html>
         <html lang="en">
@@ -427,6 +426,41 @@ app.post('/api/payment-callback', async (req, res) => {
     }
 
     res.status(200).send('OK');
+});
+
+// ─── LIVE DASHBOARD STATS ENDPOINT ───
+app.get('/api/live-stats', async (req, res) => {
+    try {
+        const snapshot = await db.collection('orders').where('status', '==', 'PAID').get();
+        
+        let totalTickets = 0;
+        let totalRevenue = 0;
+        let lionsCount = 0;
+        let leosCount = 0;
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            const qty = Number(data.quantity) || 1;
+            
+            totalTickets += qty;
+            totalRevenue += Number(data.amount) || 0;
+            
+            if (data.packageTier === 'LIONS') lionsCount += qty;
+            if (data.packageTier === 'LEOS') leosCount += qty;
+        });
+
+        res.json({
+            success: true,
+            totalTickets,
+            totalRevenue,
+            lionsCount,
+            leosCount,
+            lastUpdated: new Date().toISOString()
+        });
+    } catch (e) {
+        console.error('[STATS ERROR]', e.message);
+        res.status(500).json({ success: false, error: 'Could not fetch stats' });
+    }
 });
 
 // Status endpoint
