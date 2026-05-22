@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // EVENT: District Governor's Banquet 2026
-// FEATURES: M-Pesa STK, VIP E-Tickets, Live Stats
+// FEATURES: M-Pesa STK, VIP E-Tickets, Live Stats (with Feed)
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -428,7 +428,7 @@ app.post('/api/payment-callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// ─── LIVE DASHBOARD STATS ENDPOINT ───
+// ─── LIVE DASHBOARD STATS ENDPOINT (WITH RECENT ORDERS) ───
 app.get('/api/live-stats', async (req, res) => {
     try {
         const snapshot = await db.collection('orders').where('status', '==', 'PAID').get();
@@ -437,6 +437,7 @@ app.get('/api/live-stats', async (req, res) => {
         let totalRevenue = 0;
         let lionsCount = 0;
         let leosCount = 0;
+        let allOrders = [];
 
         snapshot.forEach(doc => {
             const data = doc.data();
@@ -447,7 +448,27 @@ app.get('/api/live-stats', async (req, res) => {
             
             if (data.packageTier === 'LIONS') lionsCount += qty;
             if (data.packageTier === 'LEOS') leosCount += qty;
+
+            // Safely grab the timestamp
+            let timeObj = new Date();
+            if (data.updatedAt && typeof data.updatedAt.toDate === 'function') {
+                timeObj = data.updatedAt.toDate();
+            } else if (data.createdAt && typeof data.createdAt.toDate === 'function') {
+                timeObj = data.createdAt.toDate();
+            }
+
+            allOrders.push({
+                name: data.payerName,
+                tier: data.packageTier,
+                qty: qty,
+                amount: Number(data.amount) || 0,
+                time: timeObj
+            });
         });
+
+        // Sort by most recent first and grab the top 15
+        allOrders.sort((a, b) => b.time - a.time);
+        const recentOrders = allOrders.slice(0, 15);
 
         res.json({
             success: true,
@@ -455,6 +476,7 @@ app.get('/api/live-stats', async (req, res) => {
             totalRevenue,
             lionsCount,
             leosCount,
+            recentOrders,
             lastUpdated: new Date().toISOString()
         });
     } catch (e) {
