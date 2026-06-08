@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
-// EVENT: District Governor's Banquet 2026
-// FEATURES: M-Pesa STK, VIP E-Tickets, Live Stats (with Feed)
+// MULTI-EVENT GATEWAY
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -30,6 +30,36 @@ apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
+
+// ─── EVENT CONFIGURATION DICTIONARY ───
+// This controls the branding, colors, and text for different events.
+const EVENT_CONFIGS = {
+    'DG_BANQUET_2026': {
+        title: "DISTRICT GOVERNOR'S BANQUET 2026",
+        emailSubject: "🎫 Your VIP Pass: District Governor's Banquet",
+        venue: "Ole Sereni Hotel • July 18th, 2026",
+        primaryColor: "#00338D", // Lions Blue
+        accentColor: "#F2A900",  // Lions Gold
+        bgGradient: "linear-gradient(135deg, #001f5b, #00338D)",
+        buttonGradient: "linear-gradient(135deg, #F2A900, #d97706)",
+        ticketHeader: "SARAMI"
+    },
+    'DANCE_2_EDUCATE_2026': {
+        title: "DANCE 2 EDUCATE - CHARITY EVENT",
+        emailSubject: "🪩 Your Ticket: Dance 2 Educate",
+        venue: "Carnivore Grounds, Simba Saloon",
+        primaryColor: "#4F46E5", // Indigo 600
+        accentColor: "#EC4899",  // Pink 500
+        bgGradient: "linear-gradient(135deg, #312e81, #4F46E5)",
+        buttonGradient: "linear-gradient(135deg, #EC4899, #be185d)",
+        ticketHeader: "SARAMI TICKETS"
+    }
+};
+
+// Failsafe helper function: ALWAYS defaults to the live DG Banquet if anything goes wrong
+function getEventConfig(eventId) {
+    return EVENT_CONFIGS[eventId] || EVENT_CONFIGS['DG_BANQUET_2026'];
+}
 
 // ─── Middleware ───
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok', uptime: process.uptime() }));
@@ -81,9 +111,12 @@ async function getAuthToken() {
 // ─── STUNNING E-TICKET EMAIL FUNCTION ───
 async function sendConfirmationEmail(orderData, orderId, orderRef) {
     try {
-        console.log(`[EMAIL] Generating VIP Ticket for ${orderData.payerEmail}`);
+        console.log(`[EMAIL] Generating Ticket for ${orderData.payerEmail}`);
 
-        // 1. Generate Live QR Code URL (Bypasses Gmail Security Filters)
+        // 1. Fetch Event Config (Failsafe defaults to DG Banquet)
+        const config = getEventConfig(orderData.eventId);
+
+        // 2. Generate Live QR Code URL
         const qrPayload = JSON.stringify({
             ticketID: orderId,
             name: orderData.payerName,
@@ -91,17 +124,17 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
             qty: orderData.quantity,
             status: "PAID"
         });
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrPayload)}&color=00338D`;
+        // Remove '#' for the QR API color
+        const qrColor = config.primaryColor.replace('#', ''); 
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrPayload)}&color=${qrColor}`;
 
-        // 2. The Download Link
+        // 3. The Download Link
         const downloadLink = `https://ticketing-app-final.onrender.com/api/ticket/${orderId}`;
 
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-        const eventTitle = orderData.eventName || "District Governor's Banquet";
+        sendSmtpEmail.subject = config.emailSubject; // Dynamic Subject
         
-        sendSmtpEmail.subject = `🎫 Your VIP Pass: ${eventTitle}`;
-        
-        // 3. Ultra-Premium Email Template
+        // 4. Ultra-Premium Email Template (Dynamic Colors & Text)
         sendSmtpEmail.htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -109,22 +142,22 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #050a15; padding: 40px 20px;">
                 <tr>
                     <td align="center">
-                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(242,169,0,0.15); max-width: 600px; width: 100%;">
+                        <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.15); max-width: 600px; width: 100%;">
                             
                             <tr>
-                                <td style="background: linear-gradient(135deg, #001f5b, #00338D); padding: 40px 20px; text-align: center; border-bottom: 5px solid #F2A900;">
-                                    <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900;">SARAMI</h1>
-                                    <p style="color: #F2A900; margin: 5px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 3px;">DISTRICT GOVERNOR'S BANQUET 2026</p>
+                                <td style="background: ${config.bgGradient}; padding: 40px 20px; text-align: center; border-bottom: 5px solid ${config.accentColor};">
+                                    <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900;">${config.ticketHeader}</h1>
+                                    <p style="color: ${config.accentColor}; margin: 5px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 3px;">${config.title}</p>
                                 </td>
                             </tr>
                             
                             <tr>
                                 <td align="center" style="padding: 40px 30px 20px 30px;">
-                                    <h2 style="color: #00338D; margin-top: 0; font-size: 24px;">Payment Confirmed!</h2>
-                                    <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">Hello <strong>${orderData.payerName}</strong>, your seat at the Ole Sereni Hotel is officially secured.</p>
+                                    <h2 style="color: ${config.primaryColor}; margin-top: 0; font-size: 24px;">Payment Confirmed!</h2>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">Hello <strong>${orderData.payerName}</strong>, your ticket is officially secured.</p>
                                     
-                                    <a href="${downloadLink}" style="display: inline-block; background: linear-gradient(135deg, #F2A900, #d97706); color: #000000; font-size: 18px; font-weight: bold; text-decoration: none; padding: 18px 40px; border-radius: 50px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 10px 20px rgba(242,169,0,0.3);">
-                                        ⬇ Download VIP Pass
+                                    <a href="${downloadLink}" style="display: inline-block; background: ${config.buttonGradient}; color: #ffffff; font-size: 18px; font-weight: bold; text-decoration: none; padding: 18px 40px; border-radius: 50px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 10px 20px rgba(0,0,0,0.2);">
+                                        ⬇ Download E-Ticket
                                     </a>
                                     <p style="font-size: 12px; color: #94a3b8; margin-top: 15px;">Click above to save your ticket to your device.</p>
                                 </td>
@@ -133,7 +166,7 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
                             <tr>
                                 <td style="padding: 20px 40px 40px 40px;">
                                     <div style="border: 2px dashed #cbd5e1; border-radius: 16px; padding: 30px; text-align: center; background-color: #f8fafc;">
-                                        <p style="margin: 0 0 20px 0; font-size: 14px; font-weight: bold; color: #00338D; text-transform: uppercase; letter-spacing: 2px;">Ticket Preview</p>
+                                        <p style="margin: 0 0 20px 0; font-size: 14px; font-weight: bold; color: ${config.primaryColor}; text-transform: uppercase; letter-spacing: 2px;">Ticket Preview</p>
                                         
                                         <img src="${qrImageUrl}" width="180" height="180" alt="Your QR Code" style="display: block; margin: 0 auto; border-radius: 8px;">
                                         
@@ -154,8 +187,8 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
                                                     <p style="margin: 2px 0 0 0; font-size: 16px; color: #16a34a; font-weight: bold;">KES ${orderData.amount.toLocaleString()}</p>
                                                 </td>
                                                 <td align="right">
-                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Dietary</p>
-                                                    <p style="margin: 2px 0 0 0; font-size: 16px; color: #0f172a; font-weight: bold;">${orderData.dietaryPreference || 'None'}</p>
+                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Venue</p>
+                                                    <p style="margin: 2px 0 0 0; font-size: 12px; color: #0f172a; font-weight: bold;">${config.venue.split('•')[0]}</p>
                                                 </td>
                                             </tr>
                                         </table>
@@ -176,13 +209,12 @@ async function sendConfirmationEmail(orderData, orderId, orderRef) {
         </html>
         `;
         
-        // Sender and Recipient
         sendSmtpEmail.sender = { "name": "Sarami Events", "email": "etickets@saramievents.co.ke" }; 
         sendSmtpEmail.replyTo = { "email": "etickets@saramievents.co.ke", "name": "Sarami Events Support" };
         sendSmtpEmail.to = [{ "email": orderData.payerEmail, "name": orderData.payerName }];
 
         await apiInstance.sendTransacEmail(sendSmtpEmail);
-        console.log(`[EMAIL] VIP Ticket successfully sent to ${orderData.payerEmail}`);
+        console.log(`[EMAIL] Ticket successfully sent to ${orderData.payerEmail}`);
 
         await orderRef.update({ emailStatus: 'SENT', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     } catch (err) {
@@ -203,13 +235,17 @@ app.get('/api/ticket/:orderId', async (req, res) => {
             return res.status(403).send('<h1>Payment for this ticket is pending or failed.</h1>');
         }
 
+        // Fetch dynamic config
+        const config = getEventConfig(orderData.eventId);
+        const qrColor = config.primaryColor.replace('#', ''); 
+
         const qrPayload = JSON.stringify({
             ticketID: req.params.orderId,
             name: orderData.payerName,
             tier: orderData.packageTier,
             qty: orderData.quantity
         });
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrPayload)}&color=00338D`;
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrPayload)}&color=${qrColor}`;
 
         const html = `
         <!DOCTYPE html>
@@ -217,7 +253,7 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>VIP Ticket - ${orderData.payerName}</title>
+            <title>E-Ticket - ${orderData.payerName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;900&display=swap" rel="stylesheet">
             <style>
@@ -233,19 +269,19 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         <body class="flex flex-col items-center justify-center min-h-screen p-4">
             
             <div class="mb-6 print-btn">
-                <button onclick="window.print()" class="bg-gradient-to-r from-yellow-500 to-yellow-600 text-black font-bold uppercase tracking-widest px-8 py-4 rounded-full shadow-xl hover:scale-105 transition transform">
+                <button onclick="window.print()" class="text-white font-bold uppercase tracking-widest px-8 py-4 rounded-full shadow-xl hover:scale-105 transition transform" style="background: ${config.buttonGradient}">
                     <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     Save as PDF / Print
                 </button>
             </div>
 
             <div class="ticket-container bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-200">
-                <div class="bg-[#00338D] p-8 text-center border-b-8 border-[#F2A900]">
-                    <h1 class="text-3xl font-black text-white tracking-widest uppercase">SARAMI</h1>
-                    <p class="text-[#F2A900] text-xs font-bold tracking-[0.2em] mt-1">Governor's Banquet 2026</p>
+                <div class="p-8 text-center border-b-8" style="background-color: ${config.primaryColor}; border-color: ${config.accentColor};">
+                    <h1 class="text-3xl font-black text-white tracking-widest uppercase">${config.ticketHeader}</h1>
+                    <p class="text-xs font-bold tracking-[0.2em] mt-1" style="color: ${config.accentColor};">${config.title}</p>
                 </div>
                 
-                <div class="p-8 text-center bg-blue-50">
+                <div class="p-8 text-center" style="background-color: ${config.primaryColor}15;">
                     <img src="${qrImageUrl}" alt="QR Code" class="w-48 h-48 mx-auto rounded-xl shadow-sm border-4 border-white">
                     <p class="mt-4 text-xs font-mono text-gray-500 tracking-widest">ID: ${req.params.orderId.substring(0,10).toUpperCase()}</p>
                 </div>
@@ -258,19 +294,19 @@ app.get('/api/ticket/:orderId', async (req, res) => {
                         </div>
                         <div class="text-right">
                             <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Ticket Tier</p>
-                            <p class="text-lg font-bold text-[#00338D]">${orderData.packageTier}</p>
+                            <p class="text-lg font-bold" style="color: ${config.primaryColor};">${orderData.packageTier}</p>
                         </div>
                         <div>
                             <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Guests</p>
                             <p class="text-lg font-bold text-gray-900">${orderData.quantity}</p>
                         </div>
                         <div class="text-right">
-                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Dietary</p>
-                            <p class="text-lg font-bold text-gray-900">${orderData.dietaryPreference || 'None'}</p>
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Dietary/Notes</p>
+                            <p class="text-lg font-bold text-gray-900">${orderData.dietaryPreference || 'N/A'}</p>
                         </div>
                         <div class="col-span-2 border-t border-gray-100 pt-4 mt-2">
-                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Venue & Time</p>
-                            <p class="text-md font-bold text-gray-900">Ole Sereni Hotel • July 18th, 2026</p>
+                            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Venue & Info</p>
+                            <p class="text-md font-bold text-gray-900">${config.venue}</p>
                         </div>
                     </div>
                 </div>
@@ -287,7 +323,7 @@ app.get('/api/ticket/:orderId', async (req, res) => {
 
 // ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
-    const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference } = req.body || {};
+    const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference, eventId } = req.body || {};
 
     if (!payerName || !payerEmail || !payerPhone || !amount) {
         return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -304,6 +340,7 @@ app.post('/api/create-order', async (req, res) => {
             packageTier: packageTier || 'LIONS',
             dietaryPreference: dietaryPreference || 'None',
             eventName: eventName || "District Governor's Banquet 2026",
+            eventId: eventId || 'DG_BANQUET_2026', // Saves the event ID
             status: 'INITIATED',
             emailStatus: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -320,7 +357,7 @@ app.post('/api/create-order', async (req, res) => {
             merchantId: "139",
             transactionTypeId: 1,
             payerAccount: formattedPhone,
-            narration: `DG Banquet: ${payerName}`,
+            narration: `Event: ${payerName}`, 
             callbackURL: "https://ticketing-app-final.onrender.com/api/payment-callback",
             ptyId: 1,
             promptDisplayAccount: "Sarami Events" 
