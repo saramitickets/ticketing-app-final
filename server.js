@@ -37,7 +37,7 @@ const EVENT_CONFIGS = {
     'DG_BANQUET_2026': {
         title: "DISTRICT GOVERNOR'S BANQUET 2026",
         emailSubject: "🎫 Your VIP Pass: District Governor's Banquet",
-        venue: "Ole Sereni Hotel • July 18th, 2026",
+        venue: "Lions Service Centre, Loresho • July 18th, 2026 at 6:30 PM",
         primaryColor: "#00338D", // Lions Blue
         accentColor: "#F2A900",  // Lions Gold
         bgGradient: "linear-gradient(135deg, #001f5b, #00338D)",
@@ -323,7 +323,8 @@ app.get('/api/ticket/:orderId', async (req, res) => {
 
 // ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
-    const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference, eventId } = req.body || {};
+    // 1. Destructure clubName explicitly from req.body
+    const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference, clubName, eventId } = req.body || {};
 
     if (!payerName || !payerEmail || !payerPhone || !amount) {
         return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -339,8 +340,9 @@ app.post('/api/create-order', async (req, res) => {
             quantity: Number(quantity) || 1,
             packageTier: packageTier || 'LIONS',
             dietaryPreference: dietaryPreference || 'None',
+            clubName: clubName || 'N/A', // 2. Successfully save the clubName
             eventName: eventName || "District Governor's Banquet 2026",
-            eventId: eventId || 'DG_BANQUET_2026', // Saves the event ID
+            eventId: eventId || 'DG_BANQUET_2026', 
             status: 'INITIATED',
             emailStatus: 'PENDING',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -494,9 +496,12 @@ app.get('/api/live-stats', async (req, res) => {
                 timeObj = data.createdAt.toDate();
             }
 
+            // 3. Make sure clubName and dietaryPreference are sent to the frontend table
             allOrders.push({
                 name: data.payerName,
                 tier: data.packageTier,
+                clubName: data.clubName || 'N/A',
+                dietaryPreference: data.dietaryPreference || 'None',
                 qty: qty,
                 amount: Number(data.amount) || 0,
                 time: timeObj
