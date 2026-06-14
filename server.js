@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // MULTI-EVENT GATEWAY
-// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, Database Management
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -447,7 +447,7 @@ app.post('/api/payment-callback', async (req, res) => {
         else if (data.receiptNumber) receipt = data.receiptNumber;
 
         await ref.update({
-            status: isSuccess ? 'PAID' : 'CANCELLED',
+            status: isSuccess ? 'PAID' : 'FAILED', // Adjusted to explicitly mark FAILED so the frontend catches it
             paymentStatus: isSuccess ? 'PAID' : 'FAILED',
             reason: reason,
             mpesaReceipt: receipt,
@@ -467,10 +467,11 @@ app.post('/api/payment-callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// ─── LIVE DASHBOARD STATS ENDPOINT (WITH RECENT ORDERS) ───
+// ─── LIVE DASHBOARD STATS ENDPOINT (MODIFIED FOR VIEWER) ───
 app.get('/api/live-stats', async (req, res) => {
     try {
-        const snapshot = await db.collection('orders').where('status', '==', 'PAID').get();
+        // Removed the .where() filter so it fetches ALL records (Paid and Failed)
+        const snapshot = await db.collection('orders').get();
         
         let totalTickets = 0;
         let totalRevenue = 0;
@@ -482,11 +483,14 @@ app.get('/api/live-stats', async (req, res) => {
             const data = doc.data();
             const qty = Number(data.quantity) || 1;
             
-            totalTickets += qty;
-            totalRevenue += Number(data.amount) || 0;
-            
-            if (data.packageTier === 'LIONS') lionsCount += qty;
-            if (data.packageTier === 'LEOS') leosCount += qty;
+            // Only add to the overall stats if the order is PAID
+            if (data.status === 'PAID') {
+                totalTickets += qty;
+                totalRevenue += Number(data.amount) || 0;
+                
+                if (data.packageTier === 'LIONS') lionsCount += qty;
+                if (data.packageTier === 'LEOS') leosCount += qty;
+            }
 
             // Safely grab the timestamp
             let timeObj = new Date();
@@ -496,34 +500,58 @@ app.get('/api/live-stats', async (req, res) => {
                 timeObj = data.createdAt.toDate();
             }
 
-            // 3. Make sure clubName and dietaryPreference are sent to the frontend table
+            // Push the ID and normalize the status for the frontend
             allOrders.push({
+                id: doc.id, // VERY IMPORTANT: Required for the delete functionality
                 name: data.payerName,
                 tier: data.packageTier,
                 clubName: data.clubName || 'N/A',
                 dietaryPreference: data.dietaryPreference || 'None',
                 qty: qty,
                 amount: Number(data.amount) || 0,
+                status: data.status === 'PAID' ? 'paid' : 'failed', // Map for frontend tabs
+                failureReason: data.reason || data.status || 'Unknown Error', // Map error message
                 time: timeObj
             });
         });
 
-        // Sort by most recent first and grab the top 15
+        // Sort by most recent first
         allOrders.sort((a, b) => b.time - a.time);
-        const recentOrders = allOrders.slice(0, 15);
-
+        
+        // Removed the slice so the frontend gets the full database viewer
         res.json({
             success: true,
             totalTickets,
             totalRevenue,
             lionsCount,
             leosCount,
-            recentOrders,
+            allOrders, 
             lastUpdated: new Date().toISOString()
         });
     } catch (e) {
         console.error('[STATS ERROR]', e.message);
         res.status(500).json({ success: false, error: 'Could not fetch stats' });
+    }
+});
+
+// ─── DELETE FAILED RECORD ENDPOINT ───
+app.delete('/api/delete-record/:id', async (req, res) => {
+    try {
+        const docId = req.params.id;
+
+        if (!docId) {
+            return res.status(400).json({ success: false, message: "No document ID provided" });
+        }
+
+        // Deletes the specific document from the 'orders' collection
+        await db.collection('orders').doc(docId).delete();
+        
+        console.log(`[DELETE] Successfully permanently deleted record: ${docId}`);
+        res.status(200).json({ success: true, message: "Record permanently deleted" });
+
+    } catch (error) {
+        console.error("[DELETE ERROR] Failed to delete record from Firestore:", error);
+        res.status(500).json({ success: false, message: "Failed to delete record" });
     }
 });
 
