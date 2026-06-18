@@ -464,7 +464,6 @@ app.get('/api/live-stats', async (req, res) => {
     try {
         const snapshot = await db.collection('orders').get();
         
-        // 1. Put the counter variables back for the old dashboard
         let totalTickets = 0;
         let totalRevenue = 0;
         let lionsCount = 0;
@@ -475,7 +474,6 @@ app.get('/api/live-stats', async (req, res) => {
             const data = doc.data();
             const qty = Number(data.quantity) || 1;
             
-            // 2. Calculate the stats ONLY for Paid orders (For the old dashboard)
             if (data.status === 'PAID') {
                 totalTickets += qty;
                 totalRevenue += Number(data.amount) || 0;
@@ -490,7 +488,6 @@ app.get('/api/live-stats', async (req, res) => {
                 timeObj = data.createdAt.toDate();
             }
 
-            // Extract EVERYTHING required for the developer console
             allOrders.push({
                 id: doc.id,
                 time: timeObj,
@@ -510,21 +507,18 @@ app.get('/api/live-stats', async (req, res) => {
             });
         });
 
-        // Sort by most recent first
         allOrders.sort((a, b) => b.time - a.time);
         
-        // 3. Create a specific filtered array so the old dashboard only shows the 15 newest PAID orders
         const recentOrders = allOrders.filter(o => o.status === 'paid').slice(0, 15);
         
-        // 4. Send ALL the data so both dashboards get exactly what they need
         res.json({ 
             success: true, 
             totalTickets, 
             totalRevenue, 
             lionsCount, 
             leosCount, 
-            recentOrders, // The old dashboard uses this
-            allOrders,    // The new developer console uses this
+            recentOrders, 
+            allOrders,    
             lastUpdated: new Date().toISOString() 
         });
     } catch (e) {
@@ -533,17 +527,39 @@ app.get('/api/live-stats', async (req, res) => {
     }
 });
 
+// ─── MANUAL TICKET EMAIL TRIGGER ───
+app.post('/api/resend-ticket/:id', async (req, res) => {
+    try {
+        const docId = req.params.id;
+        const docSnap = await db.collection('orders').doc(docId).get();
+        
+        if (!docSnap.exists) {
+            return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        const orderData = docSnap.data();
+        if (orderData.status !== 'PAID') {
+            return res.status(400).json({ success: false, message: "Order must be marked as PAID first." });
+        }
+
+        // Fire the email function manually
+        await sendConfirmationEmail(orderData, docId, docSnap.ref);
+        
+        res.status(200).json({ success: true, message: "Ticket email successfully triggered." });
+    } catch (error) {
+        console.error("[RESEND ERROR]", error);
+        res.status(500).json({ success: false, message: "Failed to send email." });
+    }
+});
+
 // ─── DELETE FAILED RECORD ENDPOINT ───
 app.delete('/api/delete-record/:id', async (req, res) => {
     try {
         const docId = req.params.id;
-
         if (!docId) {
             return res.status(400).json({ success: false, message: "No document ID provided" });
         }
-
         await db.collection('orders').doc(docId).delete();
-        
         console.log(`[DELETE] Successfully permanently deleted record: ${docId}`);
         res.status(200).json({ success: true, message: "Record permanently deleted" });
 
