@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // MULTI-EVENT GATEWAY
-// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, Database Management
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, Database Management, QR Check-In
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -337,6 +337,7 @@ app.post('/api/create-order', async (req, res) => {
             eventId: eventId || 'DG_BANQUET_2026', 
             status: 'INITIATED',
             emailStatus: 'PENDING',
+            attended: false, // Added for Check-In system
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
@@ -459,6 +460,155 @@ app.post('/api/payment-callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
+// ─── SCANNER CHECK-IN API ENDPOINT ───
+app.post('/api/check-in', async (req, res) => {
+    const { ticketId } = req.body;
+    
+    if (!ticketId) return res.status(400).json({ success: false, message: "No Ticket ID provided" });
+
+    try {
+        const orderRef = db.collection('orders').doc(ticketId);
+        const doc = await orderRef.get();
+        
+        if (!doc.exists) return res.json({ success: false, message: "Invalid Ticket: Ticket not found." });
+        
+        const data = doc.data();
+        
+        // Ensure they actually paid
+        if (data.status !== 'PAID') {
+            return res.json({ success: false, message: `Ticket Unpaid. Current Status: ${data.status}` });
+        }
+
+        // Prevent double scanning
+        if (data.attended) {
+            return res.json({ success: false, message: "Ticket Already Used!" });
+        }
+        
+        // Mark as attended
+        await orderRef.update({ 
+            attended: true, 
+            checkInTime: admin.firestore.FieldValue.serverTimestamp() 
+        });
+        
+        res.json({ success: true, name: data.payerName, tier: data.packageTier, qty: data.quantity });
+    } catch (e) {
+        console.error("[SCANNER ERROR]", e);
+        res.status(500).json({ success: false, message: "System Error communicating with database." });
+    }
+});
+
+// ─── WEB SCANNER UI PAGE ENDPOINT ───
+app.get('/scanner', (req, res) => {
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Event Scanner App</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    </head>
+    <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
+        <h1 class="text-3xl font-bold mt-8 mb-4 text-center tracking-wider uppercase text-blue-400">Door Check-In</h1>
+        
+        <div id="reader" class="w-full max-w-md bg-white rounded-xl overflow-hidden shadow-2xl text-black"></div>
+        
+        <div id="result-box" class="mt-8 w-full max-w-md p-6 rounded-xl hidden text-center shadow-2xl transition-all duration-300">
+            <h2 id="result-name" class="text-3xl font-bold mb-2"></h2>
+            <p id="result-tier" class="text-xl font-semibold opacity-90"></p>
+            <p id="result-msg" class="mt-4 font-mono text-sm"></p>
+            <button onclick="resetScanner()" class="mt-8 bg-white text-gray-900 px-8 py-3 rounded-full font-black uppercase tracking-widest shadow-lg hover:scale-105 transition transform">Scan Next Guest</button>
+        </div>
+
+        <script>
+            let html5QrcodeScanner;
+            let isScanning = true;
+
+            function onScanSuccess(decodedText, decodedResult) {
+                if (!isScanning) return;
+                isScanning = false;
+                html5QrcodeScanner.pause(true);
+                
+                try {
+                    // Our QR payload is stringified JSON
+                    const qrData = JSON.parse(decodedText);
+                    const ticketId = qrData.ticketID || decodedText;
+                    verifyTicket(ticketId);
+                } catch (e) {
+                    // Fallback just in case it's a raw string
+                    verifyTicket(decodedText);
+                }
+            }
+
+            function onScanFailure(error) {
+                // Ignore background scan failures
+            }
+
+            async function verifyTicket(ticketId) {
+                const resultBox = document.getElementById('result-box');
+                const nameEl = document.getElementById('result-name');
+                const tierEl = document.getElementById('result-tier');
+                const msgEl = document.getElementById('result-msg');
+                
+                try {
+                    resultBox.className = "mt-8 w-full max-w-md p-6 rounded-xl text-center shadow-2xl bg-blue-600 block";
+                    nameEl.innerText = "Verifying...";
+                    tierEl.innerText = "";
+                    msgEl.innerText = "Checking database, please wait...";
+
+                    const response = await fetch('/api/check-in', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ticketId })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // GREEN: SUCCESS
+                        resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-green-500 block text-white border-4 border-green-300";
+                        nameEl.innerText = "✅ " + data.name;
+                        tierEl.innerText = data.tier + " TIER (Admit " + data.qty + ")";
+                        msgEl.innerText = "Access Granted. Checked into database.";
+                        
+                        // Optional Audio Beep
+                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){}
+                    } else {
+                        // RED: FAILED
+                        resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-red-600 block text-white border-4 border-red-400";
+                        nameEl.innerText = "❌ DENIED";
+                        tierEl.innerText = "";
+                        msgEl.innerText = data.message;
+                        
+                        // Optional Audio Buzz
+                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){}
+                    }
+                } catch (err) {
+                    resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-orange-600 block text-white";
+                    nameEl.innerText = "⚠️ NETWORK ERROR";
+                    msgEl.innerText = "Could not reach the server.";
+                }
+            }
+
+            function resetScanner() {
+                document.getElementById('result-box').classList.add('hidden');
+                isScanning = true;
+                html5QrcodeScanner.resume();
+            }
+
+            window.onload = () => {
+                html5QrcodeScanner = new Html5QrcodeScanner(
+                    "reader", { fps: 10, qrbox: {width: 250, height: 250} }, /* verbose= */ false);
+                html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            };
+        </script>
+    </body>
+    </html>
+    `;
+    res.send(html);
+});
+
 // ─── COMPREHENSIVE LIVE STATS ENDPOINT ───
 app.get('/api/live-stats', async (req, res) => {
     try {
@@ -503,7 +653,8 @@ app.get('/api/live-stats', async (req, res) => {
                 failureReason: data.reason || 'No reason provided',
                 emailStatus: data.emailStatus || 'PENDING',
                 mpesaReceipt: data.mpesaReceipt || 'N/A',
-                merchantTxId: data.merchantRequestID || 'N/A'
+                merchantTxId: data.merchantRequestID || 'N/A',
+                attended: data.attended || false
             });
         });
 
