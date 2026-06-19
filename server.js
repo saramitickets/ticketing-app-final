@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // MULTI-EVENT GATEWAY
-// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, Database Management, QR Check-In
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, QR Check-In, Manual Overrides
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -337,7 +337,7 @@ app.post('/api/create-order', async (req, res) => {
             eventId: eventId || 'DG_BANQUET_2026', 
             status: 'INITIATED',
             emailStatus: 'PENDING',
-            attended: false, // Added for Check-In system
+            attended: false, // For Check-In system
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
@@ -474,17 +474,14 @@ app.post('/api/check-in', async (req, res) => {
         
         const data = doc.data();
         
-        // Ensure they actually paid
         if (data.status !== 'PAID') {
             return res.json({ success: false, message: `Ticket Unpaid. Current Status: ${data.status}` });
         }
 
-        // Prevent double scanning
         if (data.attended) {
             return res.json({ success: false, message: "Ticket Already Used!" });
         }
         
-        // Mark as attended
         await orderRef.update({ 
             attended: true, 
             checkInTime: admin.firestore.FieldValue.serverTimestamp() 
@@ -494,6 +491,30 @@ app.post('/api/check-in', async (req, res) => {
     } catch (e) {
         console.error("[SCANNER ERROR]", e);
         res.status(500).json({ success: false, message: "System Error communicating with database." });
+    }
+});
+
+// ─── MANUAL ATTENDANCE TOGGLE ───
+app.post('/api/toggle-attendance/:id', async (req, res) => {
+    try {
+        const docId = req.params.id;
+        const docRef = db.collection('orders').doc(docId);
+        const docSnap = await docRef.get();
+        
+        if (!docSnap.exists) return res.status(404).json({ success: false, message: "Order not found" });
+        
+        const data = docSnap.data();
+        const newStatus = !data.attended; // Flip the status
+        
+        await docRef.update({ 
+            attended: newStatus,
+            checkInTime: newStatus ? admin.firestore.FieldValue.serverTimestamp() : null
+        });
+        
+        res.json({ success: true, attended: newStatus });
+    } catch (e) {
+        console.error("[TOGGLE ERROR]", e);
+        res.status(500).json({ success: false, message: "Server error toggling status." });
     }
 });
 
@@ -531,19 +552,15 @@ app.get('/scanner', (req, res) => {
                 html5QrcodeScanner.pause(true);
                 
                 try {
-                    // Our QR payload is stringified JSON
                     const qrData = JSON.parse(decodedText);
                     const ticketId = qrData.ticketID || decodedText;
                     verifyTicket(ticketId);
                 } catch (e) {
-                    // Fallback just in case it's a raw string
                     verifyTicket(decodedText);
                 }
             }
 
-            function onScanFailure(error) {
-                // Ignore background scan failures
-            }
+            function onScanFailure(error) { }
 
             async function verifyTicket(ticketId) {
                 const resultBox = document.getElementById('result-box');
@@ -566,22 +583,16 @@ app.get('/scanner', (req, res) => {
                     const data = await response.json();
                     
                     if (data.success) {
-                        // GREEN: SUCCESS
                         resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-green-500 block text-white border-4 border-green-300";
                         nameEl.innerText = "✅ " + data.name;
                         tierEl.innerText = data.tier + " TIER (Admit " + data.qty + ")";
                         msgEl.innerText = "Access Granted. Checked into database.";
-                        
-                        // Optional Audio Beep
                         try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){}
                     } else {
-                        // RED: FAILED
                         resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-red-600 block text-white border-4 border-red-400";
                         nameEl.innerText = "❌ DENIED";
                         tierEl.innerText = "";
                         msgEl.innerText = data.message;
-                        
-                        // Optional Audio Buzz
                         try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){}
                     }
                 } catch (err) {
@@ -598,8 +609,7 @@ app.get('/scanner', (req, res) => {
             }
 
             window.onload = () => {
-                html5QrcodeScanner = new Html5QrcodeScanner(
-                    "reader", { fps: 10, qrbox: {width: 250, height: 250} }, /* verbose= */ false);
+                html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
                 html5QrcodeScanner.render(onScanSuccess, onScanFailure);
             };
         </script>
@@ -654,7 +664,8 @@ app.get('/api/live-stats', async (req, res) => {
                 emailStatus: data.emailStatus || 'PENDING',
                 mpesaReceipt: data.mpesaReceipt || 'N/A',
                 merchantTxId: data.merchantRequestID || 'N/A',
-                attended: data.attended || false
+                attended: data.attended || false,
+                checkInTime: data.checkInTime ? (typeof data.checkInTime.toDate === 'function' ? data.checkInTime.toDate() : data.checkInTime) : null
             });
         });
 
@@ -693,7 +704,6 @@ app.post('/api/resend-ticket/:id', async (req, res) => {
             return res.status(400).json({ success: false, message: "Order must be marked as PAID first." });
         }
 
-        // Fire the email function manually
         await sendConfirmationEmail(orderData, docId, docSnap.ref);
         
         res.status(200).json({ success: true, message: "Ticket email successfully triggered." });
