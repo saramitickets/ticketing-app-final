@@ -1,13 +1,17 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // MULTI-EVENT GATEWAY
-// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, QR Check-In, Manual Overrides
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, QR Check-In, Manual Overrides, Maintenance Mode
 // ==========================================
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+
+// ─── MAINTENANCE MODE TOGGLE ───
+// Reads from Render Environment Variables. If set to 'true', bookings are halted.
+const MAINTENANCE_MODE = process.env.MAINTENANCE_MODE === 'true';
 
 // Initialize Firebase
 let db;
@@ -316,6 +320,16 @@ app.get('/api/ticket/:orderId', async (req, res) => {
 
 // ─── CREATE ORDER ───
 app.post('/api/create-order', async (req, res) => {
+
+    // --- NEW: MAINTENANCE MODE CHECK ---
+    if (MAINTENANCE_MODE) {
+        console.log("[MAINTENANCE] Blocked new order attempt.");
+        return res.status(503).json({ 
+            success: false, 
+            error: 'MAINTENANCE_MODE_ACTIVE' 
+        });
+    }
+
     const { payerName, payerEmail, payerPhone, amount, eventName, quantity, packageTier, dietaryPreference, clubName, eventId } = req.body || {};
 
     if (!payerName || !payerEmail || !payerPhone || !amount) {
@@ -526,92 +540,73 @@ app.get('/scanner', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Event Scanner App</title>
+        <title>Sarami Events | VIP Kiosk</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Montserrat:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" />
+        <style>
+            body { font-family: 'Montserrat', sans-serif; overflow: hidden; background-color: #050a15; color: white; }
+            .font-cinzel { font-family: 'Cinzel', serif; }
+            .kiosk-view { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.4s ease, transform 0.4s ease; transform: scale(0.95); z-index: 10; }
+            .kiosk-view.active { opacity: 1; pointer-events: auto; transform: scale(1); z-index: 20; }
+            .bg-navy-gold { background: radial-gradient(ellipse at center, #00205B 0%, #050a15 100%); }
+            .bg-emerald-luxury { background: radial-gradient(ellipse at center, #059669 0%, #064e3b 100%); }
+            .bg-crimson-error { background: radial-gradient(ellipse at center, #e11d48 0%, #4c0519 100%); }
+            #reader { border: none !important; border-radius: 1.5rem; overflow: hidden; width: 100%; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+            #reader__scan_region { background-color: white; }
+            #reader__dashboard { padding: 1.5rem; background-color: #0f172a; color: white; border-top: 3px solid #D4AF37; }
+            #reader button { background-color: #D4AF37; color: #00205B; padding: 0.75rem 1.5rem; border-radius: 999px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; transition: all 0.3s; margin: 0.5rem; }
+            .gold-text { background: linear-gradient(to bottom, #FDE047, #D4AF37, #A16207); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+            ::-webkit-scrollbar { display: none; }
+        </style>
     </head>
-    <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
-        <h1 class="text-3xl font-bold mt-8 mb-4 text-center tracking-wider uppercase text-blue-400">Door Check-In</h1>
-        
-        <div id="reader" class="w-full max-w-md bg-white rounded-xl overflow-hidden shadow-2xl text-black"></div>
-        
-        <div id="result-box" class="mt-8 w-full max-w-md p-6 rounded-xl hidden text-center shadow-2xl transition-all duration-300">
-            <h2 id="result-name" class="text-3xl font-bold mb-2"></h2>
-            <p id="result-tier" class="text-xl font-semibold opacity-90"></p>
-            <p id="result-msg" class="mt-4 font-mono text-sm"></p>
-            <button onclick="resetScanner()" class="mt-8 bg-white text-gray-900 px-8 py-3 rounded-full font-black uppercase tracking-widest shadow-lg hover:scale-105 transition transform">Scan Next Guest</button>
+    <body>
+        <div id="view-welcome" class="kiosk-view bg-navy-gold active p-6 text-center">
+            <div class="mb-12">
+                <h3 class="text-[#D4AF37] font-bold tracking-[0.4em] text-sm uppercase mb-4 opacity-90">Sarami Events Presents</h3>
+                <h1 class="text-4xl md:text-6xl lg:text-7xl font-cinzel font-black tracking-widest text-white uppercase leading-[1.2] drop-shadow-2xl">
+                    The Banquet<br><span class="text-2xl md:text-4xl tracking-widest font-medium opacity-90">in honour of the</span><br><span class="gold-text">District Governor</span>
+                </h1>
+            </div>
+            <div class="flex flex-col items-center gap-6">
+                <button onclick="startScanning()" class="group relative px-12 py-5 bg-transparent overflow-hidden rounded-full border-2 border-[#D4AF37] hover:bg-[#D4AF37] transition-all duration-500 shadow-[0_0_40px_rgba(212,175,55,0.2)] hover:shadow-[0_0_60px_rgba(212,175,55,0.6)]">
+                    <span class="relative z-10 text-[#D4AF37] group-hover:text-[#00205B] font-black uppercase tracking-[0.2em] text-lg flex items-center gap-3 transition-colors duration-500"><i class="fa-solid fa-qrcode text-2xl"></i> Tap Here to Scan</span>
+                </button>
+                <button onclick="openManualSearch()" class="text-slate-400 hover:text-white uppercase tracking-widest text-sm font-bold flex items-center gap-2 transition-colors border-b border-transparent hover:border-white pb-1"><i class="fa-solid fa-keyboard"></i> Manual Guest Search</button>
+            </div>
+            <p class="absolute bottom-8 text-[#D4AF37]/50 font-mono text-[10px] uppercase tracking-widest">VIP Door Access Kiosk • Live Sync</p>
         </div>
 
+        <div id="view-scanner" class="kiosk-view bg-black p-4">
+            <div class="absolute top-8 text-center w-full z-20"><h2 class="text-white font-cinzel font-bold text-2xl tracking-widest uppercase mb-1">Please Present Ticket</h2><p class="text-slate-400 font-mono text-xs uppercase tracking-widest">Hold QR code steady in frame</p></div>
+            <div class="relative z-10 w-full max-w-md mx-auto"><div id="reader"></div></div>
+            <button onclick="cancelToHome()" class="absolute bottom-10 px-8 py-3 bg-white/10 hover:bg-white/20 border border-white/30 rounded-full text-white font-bold uppercase tracking-widest text-sm backdrop-blur-md transition-all"><i class="fa-solid fa-arrow-left mr-2"></i> Cancel / Back</button>
+        </div>
+
+        <div id="view-manual" class="kiosk-view bg-[#050a15] p-6 flex flex-col items-center justify-start pt-16">
+            <div class="w-full max-w-2xl text-center mb-8"><h2 class="text-2xl md:text-3xl font-cinzel font-bold text-[#D4AF37] tracking-widest uppercase mb-6">Guest Roster</h2><div class="relative"><i class="fa-solid fa-search absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 text-xl"></i><input type="text" id="search-input" onkeyup="filterGuests()" placeholder="Search by Name, Phone, or ID..." class="w-full bg-[#0f172a] text-white text-lg md:text-xl rounded-full py-4 pl-16 pr-6 border-2 border-slate-700 focus:border-[#D4AF37] focus:outline-none transition-colors shadow-xl"></div></div>
+            <div id="search-results" class="w-full max-w-2xl flex-1 overflow-y-auto space-y-3 pb-24 w-full"><div class="text-center text-slate-500 mt-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i><br>Syncing Live Guest List...</div></div>
+            <button onclick="cancelToHome()" class="absolute bottom-10 px-8 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-full text-white font-bold uppercase tracking-widest text-sm transition-all shadow-xl"><i class="fa-solid fa-arrow-left mr-2"></i> Cancel / Back</button>
+        </div>
+
+        <div id="view-result" class="kiosk-view p-6 text-center"><div id="result-content" class="max-w-3xl mx-auto w-full"></div></div>
+
         <script>
-            let html5QrcodeScanner;
-            let isScanning = true;
+            const API_BASE_URL = window.location.origin; 
+            let html5QrcodeScanner = null; let isProcessing = false; let resetTimer = null; let liveGuestList = [];
 
-            function onScanSuccess(decodedText, decodedResult) {
-                if (!isScanning) return;
-                isScanning = false;
-                html5QrcodeScanner.pause(true);
-                
-                try {
-                    const qrData = JSON.parse(decodedText);
-                    const ticketId = qrData.ticketID || decodedText;
-                    verifyTicket(ticketId);
-                } catch (e) {
-                    verifyTicket(decodedText);
-                }
-            }
+            function switchView(viewId) { document.querySelectorAll('.kiosk-view').forEach(v => v.classList.remove('active')); document.getElementById(viewId).classList.add('active'); }
+            function cancelToHome() { if (html5QrcodeScanner) html5QrcodeScanner.pause(true); document.getElementById('search-input').value = ''; switchView('view-welcome'); }
 
-            function onScanFailure(error) { }
+            function startScanning() { switchView('view-scanner'); isProcessing = false; if (!html5QrcodeScanner) { html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 15, qrbox: { width: 300, height: 300 }, aspectRatio: 1.0 }, false); html5QrcodeScanner.render(onScanSuccess, () => {}); } else { html5QrcodeScanner.resume(); } }
+            function onScanSuccess(decodedText) { if (isProcessing) return; isProcessing = true; html5QrcodeScanner.pause(true); try { const qrData = JSON.parse(decodedText); processTicket(qrData.ticketID || decodedText); } catch (e) { processTicket(decodedText); } }
 
-            async function verifyTicket(ticketId) {
-                const resultBox = document.getElementById('result-box');
-                const nameEl = document.getElementById('result-name');
-                const tierEl = document.getElementById('result-tier');
-                const msgEl = document.getElementById('result-msg');
-                
-                try {
-                    resultBox.className = "mt-8 w-full max-w-md p-6 rounded-xl text-center shadow-2xl bg-blue-600 block";
-                    nameEl.innerText = "Verifying...";
-                    tierEl.innerText = "";
-                    msgEl.innerText = "Checking database, please wait...";
+            async function openManualSearch() { switchView('view-manual'); document.getElementById('search-input').value = ''; document.getElementById('search-results').innerHTML = \`<div class="text-center text-slate-500 mt-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i><br>Syncing Database...</div>\`; try { const response = await fetch(\`\${API_BASE_URL}/api/live-stats\`); const data = await response.json(); if (data.success) { liveGuestList = data.allOrders.filter(order => order.status === 'paid'); filterGuests(); } } catch (error) { document.getElementById('search-results').innerHTML = \`<div class="text-center text-rose-500 mt-10"><i class="fa-solid fa-wifi text-3xl mb-4"></i><br>Connection Failed.</div>\`; } }
+            function filterGuests() { const query = document.getElementById('search-input').value.toLowerCase(); const resultsBox = document.getElementById('search-results'); const filtered = liveGuestList.filter(g => (g.name || '').toLowerCase().includes(query) || (g.phone || '').includes(query) || (g.id || '').toLowerCase().includes(query)); if (filtered.length === 0) { resultsBox.innerHTML = \`<div class="text-center text-slate-500 mt-10">No matching guests found.</div>\`; return; } resultsBox.innerHTML = filtered.map(g => { const isCheckedIn = g.attended; const btnHtml = isCheckedIn ? \`<button disabled class="bg-slate-800 text-slate-400 px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs border border-slate-700 cursor-not-allowed"><i class="fa-solid fa-check mr-2"></i> Inside</button>\` : \`<button onclick="processTicket('\${g.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs shadow-lg transition-transform hover:scale-105 active:scale-95"><i class="fa-solid fa-door-open mr-2"></i> Check In</button>\`; return \`<div class="bg-[#0f172a] border border-slate-700 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:border-slate-500 transition-colors"><div class="text-center md:text-left w-full md:w-auto"><h3 class="text-white font-bold text-lg">\${g.name}</h3><div class="text-slate-400 text-xs font-mono mt-1">\${g.phone} <span class="mx-2">|</span> \${g.tier} (Qty: \${g.qty})</div></div><div class="w-full md:w-auto flex justify-center">\${btnHtml}</div></div>\`; }).join(''); }
 
-                    const response = await fetch('/api/check-in', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ticketId })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-green-500 block text-white border-4 border-green-300";
-                        nameEl.innerText = "✅ " + data.name;
-                        tierEl.innerText = data.tier + " TIER (Admit " + data.qty + ")";
-                        msgEl.innerText = "Access Granted. Checked into database.";
-                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){}
-                    } else {
-                        resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-red-600 block text-white border-4 border-red-400";
-                        nameEl.innerText = "❌ DENIED";
-                        tierEl.innerText = "";
-                        msgEl.innerText = data.message;
-                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){}
-                    }
-                } catch (err) {
-                    resultBox.className = "mt-8 w-full max-w-md p-8 rounded-xl text-center shadow-2xl bg-orange-600 block text-white";
-                    nameEl.innerText = "⚠️ NETWORK ERROR";
-                    msgEl.innerText = "Could not reach the server.";
-                }
-            }
-
-            function resetScanner() {
-                document.getElementById('result-box').classList.add('hidden');
-                isScanning = true;
-                html5QrcodeScanner.resume();
-            }
-
-            window.onload = () => {
-                html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
-                html5QrcodeScanner.render(onScanSuccess, onScanFailure);
-            };
+            async function processTicket(ticketId) { const resultView = document.getElementById('view-result'); const contentBox = document.getElementById('result-content'); switchView('view-result'); resultView.className = "kiosk-view bg-[#0f172a] active"; contentBox.innerHTML = \`<i class="fa-solid fa-circle-notch fa-spin text-6xl text-[#D4AF37] mb-8 drop-shadow-lg"></i><h2 class="text-3xl font-cinzel font-bold tracking-widest text-white uppercase">Verifying VIP Access...</h2>\`; try { const response = await fetch(\`\${API_BASE_URL}/api/check-in\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticketId }) }); const data = await response.json(); if (data.success) { resultView.className = "kiosk-view bg-emerald-luxury active"; contentBox.innerHTML = \`<div class="scale-110"><i class="fa-solid fa-check-circle text-7xl text-emerald-300 mb-6 drop-shadow-lg"></i><h3 class="text-emerald-100 font-bold tracking-[0.4em] text-lg uppercase mb-4">Thank You</h3><h1 class="text-5xl md:text-7xl font-cinzel font-black tracking-wider text-white uppercase leading-tight drop-shadow-2xl mb-4">\${data.name}</h1><div class="inline-block px-8 py-2 bg-white/10 backdrop-blur-md rounded-full border border-white/30 font-black tracking-widest uppercase text-lg shadow-inner mb-8">\${data.tier} TIER <span class="opacity-50 mx-2">|</span> ADMIT \${data.qty}</div><h2 class="text-3xl font-cinzel font-bold text-[#D4AF37] tracking-widest drop-shadow-md">Enjoy Your Evening</h2></div>\`; try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){} autoReset(4000); } else { resultView.className = "kiosk-view bg-crimson-error active"; contentBox.innerHTML = \`<div class="scale-110"><i class="fa-solid fa-triangle-exclamation text-7xl text-rose-300 mb-6 drop-shadow-lg"></i><h1 class="text-5xl md:text-6xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Access Denied</h1><div class="inline-block px-8 py-4 bg-black/40 backdrop-blur-md rounded-2xl border border-rose-500/50 font-bold text-rose-100 text-xl tracking-wide max-w-xl">\${data.message}</div><div class="mt-12"><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-rose-900 rounded-full font-black uppercase tracking-widest shadow-xl hover:scale-105 transition-transform">Return to Home</button></div></div>\`; try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){} autoReset(8000); } } catch (err) { resultView.className = "kiosk-view bg-[#b45309] active"; contentBox.innerHTML = \`<i class="fa-solid fa-wifi text-7xl text-white mb-6"></i><h1 class="text-4xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Network Error</h1><p class="text-xl text-orange-100 mb-10">Unable to reach the secure database. Please check your internet connection.</p><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-orange-900 rounded-full font-black uppercase tracking-widest shadow-xl">Return to Home</button>\`; autoReset(8000); } }
+            function autoReset(delayMs) { if (resetTimer) clearTimeout(resetTimer); resetTimer = setTimeout(() => { cancelToHome(); }, delayMs); }
         </script>
     </body>
     </html>
