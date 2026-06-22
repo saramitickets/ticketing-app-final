@@ -399,6 +399,46 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
+// ─── MANUAL TICKET CREATION (NO STK PUSH) ───
+app.post('/api/manual-order', async (req, res) => {
+    const { payerName, payerEmail, payerPhone, amount, quantity, packageTier, dietaryPreference, clubName, eventId, eventName } = req.body;
+
+    if (!payerName || !payerEmail) {
+        return res.status(400).json({ success: false, error: 'Name and Email are required' });
+    }
+
+    try {
+        const orderData = {
+            payerName,
+            payerEmail,
+            payerPhone: payerPhone || 'N/A',
+            amount: Number(amount) || 0,
+            quantity: Number(quantity) || 1,
+            packageTier: packageTier || 'LIONS',
+            dietaryPreference: dietaryPreference || 'None',
+            clubName: clubName || 'N/A',
+            eventName: eventName || "District Governor's Banquet 2026",
+            eventId: eventId || 'DG_BANQUET_2026',
+            status: 'PAID', // Instantly marked as paid!
+            paymentMethod: 'MANUAL_ENTRY', // Tag for your accounting
+            emailStatus: 'PENDING',
+            attended: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const orderRef = await db.collection('orders').add(orderData);
+
+        // Instantly trigger the VIP E-Ticket delivery
+        await sendConfirmationEmail(orderData, orderRef.id, orderRef);
+
+        res.status(200).json({ success: true, orderId: orderRef.id, message: 'Ticket created and emailed successfully!' });
+    } catch (err) {
+        console.error('[MANUAL ORDER ERROR]', err.message);
+        res.status(500).json({ success: false, error: 'Database error' });
+    }
+});
+
 // ─── CALLBACK ───
 app.post('/api/payment-callback', async (req, res) => {
     let data = req.body || {};
