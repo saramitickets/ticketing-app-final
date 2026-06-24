@@ -684,7 +684,7 @@ app.get('/scanner', (req, res) => {
                         fps: 15, 
                         qrbox: { width: 250, height: 250 }, 
                         aspectRatio: 1.0,
-                        disableFlip: false, // <--- This fixes the opposite reflection!
+                        disableFlip: true, 
                         supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
                     }, false); 
                     html5QrcodeScanner.render(onScanSuccess, () => {}); 
