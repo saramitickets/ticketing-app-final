@@ -1,7 +1,7 @@
 // ==========================================
 // SARAMI EVENTS - PRODUCTION BACKEND
 // MULTI-EVENT GATEWAY
-// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, QR Check-In, Manual Overrides, Maintenance Mode
+// FEATURES: Dynamic Event Routing, M-Pesa STK, VIP E-Tickets, Live Stats, QR Check-In, Manual Overrides, Maintenance Mode, Photo Capture
 // ==========================================
 const express = require('express');
 const axios = require('axios');
@@ -634,25 +634,157 @@ app.get('/scanner', (req, res) => {
 
         <script>
             const API_BASE_URL = window.location.origin; 
-            let html5QrcodeScanner = null; let isProcessing = false; let resetTimer = null; let liveGuestList = [];
+            let html5QrcodeScanner = null; 
+            let isProcessing = false; 
+            let resetTimer = null; 
+            let liveGuestList = [];
+            let capturedImage = null; // Variable to hold the snapped photo
 
-            function switchView(viewId) { document.querySelectorAll('.kiosk-view').forEach(v => v.classList.remove('active')); document.getElementById(viewId).classList.add('active'); }
-            function cancelToHome() { if (html5QrcodeScanner) html5QrcodeScanner.pause(true); document.getElementById('search-input').value = ''; switchView('view-welcome'); }
+            function switchView(viewId) { 
+                document.querySelectorAll('.kiosk-view').forEach(v => v.classList.remove('active')); 
+                document.getElementById(viewId).classList.add('active'); 
+            }
+            
+            function cancelToHome() { 
+                if (html5QrcodeScanner) html5QrcodeScanner.pause(true); 
+                document.getElementById('search-input').value = ''; 
+                capturedImage = null; // Clear the photo
+                switchView('view-welcome'); 
+            }
 
-            function startScanning() { switchView('view-scanner'); isProcessing = false; if (!html5QrcodeScanner) { html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
-    fps: 15, 
-    qrbox: { width: 250, height: 250 }, 
-    aspectRatio: 1.0,
-    disableFlip: false, // <--- This fixes the opposite reflection!
-    supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
-}, false);; html5QrcodeScanner.render(onScanSuccess, () => {}); } else { html5QrcodeScanner.resume(); } }
-            function onScanSuccess(decodedText) { if (isProcessing) return; isProcessing = true; html5QrcodeScanner.pause(true); try { const qrData = JSON.parse(decodedText); processTicket(qrData.ticketID || decodedText); } catch (e) { processTicket(decodedText); } }
+            // ─── NEW: SNAP THE PHOTO ───
+            function capturePhoto() {
+                try {
+                    // Find the hidden video feed the scanner is using
+                    const video = document.querySelector('#reader video');
+                    if (!video) return null;
+                    
+                    // Create a temporary digital canvas to paint the picture
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Draw the current video frame onto the canvas
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Convert to a base64 image URL
+                    return canvas.toDataURL('image/jpeg', 0.8);
+                } catch (e) {
+                    console.error("Photo capture failed", e);
+                    return null;
+                }
+            }
 
-            async function openManualSearch() { switchView('view-manual'); document.getElementById('search-input').value = ''; document.getElementById('search-results').innerHTML = \`<div class="text-center text-slate-500 mt-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i><br>Syncing Database...</div>\`; try { const response = await fetch(\`\${API_BASE_URL}/api/live-stats\`); const data = await response.json(); if (data.success) { liveGuestList = data.allOrders.filter(order => order.status === 'paid'); filterGuests(); } } catch (error) { document.getElementById('search-results').innerHTML = \`<div class="text-center text-rose-500 mt-10"><i class="fa-solid fa-wifi text-3xl mb-4"></i><br>Connection Failed.</div>\`; } }
-            function filterGuests() { const query = document.getElementById('search-input').value.toLowerCase(); const resultsBox = document.getElementById('search-results'); const filtered = liveGuestList.filter(g => (g.name || '').toLowerCase().includes(query) || (g.phone || '').includes(query) || (g.id || '').toLowerCase().includes(query)); if (filtered.length === 0) { resultsBox.innerHTML = \`<div class="text-center text-slate-500 mt-10">No matching guests found.</div>\`; return; } resultsBox.innerHTML = filtered.map(g => { const isCheckedIn = g.attended; const btnHtml = isCheckedIn ? \`<button disabled class="bg-slate-800 text-slate-400 px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs border border-slate-700 cursor-not-allowed"><i class="fa-solid fa-check mr-2"></i> Inside</button>\` : \`<button onclick="processTicket('\${g.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs shadow-lg transition-transform hover:scale-105 active:scale-95"><i class="fa-solid fa-door-open mr-2"></i> Check In</button>\`; return \`<div class="bg-[#0f172a] border border-slate-700 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:border-slate-500 transition-colors"><div class="text-center md:text-left w-full md:w-auto"><h3 class="text-white font-bold text-lg">\${g.name}</h3><div class="text-slate-400 text-xs font-mono mt-1">\${g.phone} <span class="mx-2">|</span> \${g.tier} (Qty: \${g.qty})</div></div><div class="w-full md:w-auto flex justify-center">\${btnHtml}</div></div>\`; }).join(''); }
+            function startScanning() { 
+                switchView('view-scanner'); 
+                isProcessing = false; 
+                if (!html5QrcodeScanner) { 
+                    html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+                        fps: 15, 
+                        qrbox: { width: 250, height: 250 }, 
+                        aspectRatio: 1.0,
+                        disableFlip: false, // <--- This fixes the opposite reflection!
+                        supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+                    }, false); 
+                    html5QrcodeScanner.render(onScanSuccess, () => {}); 
+                } else { 
+                    html5QrcodeScanner.resume(); 
+                } 
+            }
+            
+            function onScanSuccess(decodedText) { 
+                if (isProcessing) return; 
+                isProcessing = true; 
+                
+                // SNAP THE PHOTO THE MILLISECOND THE QR IS READ
+                capturedImage = capturePhoto(); 
+                
+                html5QrcodeScanner.pause(true); 
+                try { 
+                    const qrData = JSON.parse(decodedText); 
+                    processTicket(qrData.ticketID || decodedText); 
+                } catch (e) { 
+                    processTicket(decodedText); 
+                } 
+            }
 
-            async function processTicket(ticketId) { const resultView = document.getElementById('view-result'); const contentBox = document.getElementById('result-content'); switchView('view-result'); resultView.className = "kiosk-view bg-[#0f172a] active"; contentBox.innerHTML = \`<i class="fa-solid fa-circle-notch fa-spin text-6xl text-[#D4AF37] mb-8 drop-shadow-lg"></i><h2 class="text-3xl font-cinzel font-bold tracking-widest text-white uppercase">Verifying VIP Access...</h2>\`; try { const response = await fetch(\`\${API_BASE_URL}/api/check-in\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticketId }) }); const data = await response.json(); if (data.success) { resultView.className = "kiosk-view bg-emerald-luxury active"; contentBox.innerHTML = \`<div class="scale-110"><i class="fa-solid fa-check-circle text-7xl text-emerald-300 mb-6 drop-shadow-lg"></i><h3 class="text-emerald-100 font-bold tracking-[0.4em] text-lg uppercase mb-4">Thank You</h3><h1 class="text-5xl md:text-7xl font-cinzel font-black tracking-wider text-white uppercase leading-tight drop-shadow-2xl mb-4">\${data.name}</h1><div class="inline-block px-8 py-2 bg-white/10 backdrop-blur-md rounded-full border border-white/30 font-black tracking-widest uppercase text-lg shadow-inner mb-8">\${data.tier} TIER <span class="opacity-50 mx-2">|</span> ADMIT \${data.qty}</div><h2 class="text-3xl font-cinzel font-bold text-[#D4AF37] tracking-widest drop-shadow-md">Enjoy Your Evening</h2></div>\`; try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){} autoReset(4000); } else { resultView.className = "kiosk-view bg-crimson-error active"; contentBox.innerHTML = \`<div class="scale-110"><i class="fa-solid fa-triangle-exclamation text-7xl text-rose-300 mb-6 drop-shadow-lg"></i><h1 class="text-5xl md:text-6xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Access Denied</h1><div class="inline-block px-8 py-4 bg-black/40 backdrop-blur-md rounded-2xl border border-rose-500/50 font-bold text-rose-100 text-xl tracking-wide max-w-xl">\${data.message}</div><div class="mt-12"><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-rose-900 rounded-full font-black uppercase tracking-widest shadow-xl hover:scale-105 transition-transform">Return to Home</button></div></div>\`; try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){} autoReset(8000); } } catch (err) { resultView.className = "kiosk-view bg-[#b45309] active"; contentBox.innerHTML = \`<i class="fa-solid fa-wifi text-7xl text-white mb-6"></i><h1 class="text-4xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Network Error</h1><p class="text-xl text-orange-100 mb-10">Unable to reach the secure database. Please check your internet connection.</p><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-orange-900 rounded-full font-black uppercase tracking-widest shadow-xl">Return to Home</button>\`; autoReset(8000); } }
-            function autoReset(delayMs) { if (resetTimer) clearTimeout(resetTimer); resetTimer = setTimeout(() => { cancelToHome(); }, delayMs); }
+            async function openManualSearch() { 
+                switchView('view-manual'); 
+                document.getElementById('search-input').value = ''; 
+                document.getElementById('search-results').innerHTML = \`<div class="text-center text-slate-500 mt-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i><br>Syncing Database...</div>\`; 
+                try { 
+                    const response = await fetch(\`\${API_BASE_URL}/api/live-stats\`); 
+                    const data = await response.json(); 
+                    if (data.success) { 
+                        liveGuestList = data.allOrders.filter(order => order.status === 'paid'); 
+                        filterGuests(); 
+                    } 
+                } catch (error) { 
+                    document.getElementById('search-results').innerHTML = \`<div class="text-center text-rose-500 mt-10"><i class="fa-solid fa-wifi text-3xl mb-4"></i><br>Connection Failed.</div>\`; 
+                } 
+            }
+            
+            function filterGuests() { 
+                const query = document.getElementById('search-input').value.toLowerCase(); 
+                const resultsBox = document.getElementById('search-results'); 
+                const filtered = liveGuestList.filter(g => (g.name || '').toLowerCase().includes(query) || (g.phone || '').includes(query) || (g.id || '').toLowerCase().includes(query)); 
+                if (filtered.length === 0) { resultsBox.innerHTML = \`<div class="text-center text-slate-500 mt-10">No matching guests found.</div>\`; return; } 
+                resultsBox.innerHTML = filtered.map(g => { 
+                    const isCheckedIn = g.attended; 
+                    const btnHtml = isCheckedIn ? \`<button disabled class="bg-slate-800 text-slate-400 px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs border border-slate-700 cursor-not-allowed"><i class="fa-solid fa-check mr-2"></i> Inside</button>\` : \`<button onclick="processTicket('\${g.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-xs shadow-lg transition-transform hover:scale-105 active:scale-95"><i class="fa-solid fa-door-open mr-2"></i> Check In</button>\`; 
+                    return \`<div class="bg-[#0f172a] border border-slate-700 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:border-slate-500 transition-colors"><div class="text-center md:text-left w-full md:w-auto"><h3 class="text-white font-bold text-lg">\${g.name}</h3><div class="text-slate-400 text-xs font-mono mt-1">\${g.phone} <span class="mx-2">|</span> \${g.tier} (Qty: \${g.qty})</div></div><div class="w-full md:w-auto flex justify-center">\${btnHtml}</div></div>\`; 
+                }).join(''); 
+            }
+
+            async function processTicket(ticketId) { 
+                const resultView = document.getElementById('view-result'); 
+                const contentBox = document.getElementById('result-content'); 
+                switchView('view-result'); 
+                resultView.className = "kiosk-view bg-[#0f172a] active"; 
+                contentBox.innerHTML = \`<i class="fa-solid fa-circle-notch fa-spin text-6xl text-[#D4AF37] mb-8 drop-shadow-lg"></i><h2 class="text-3xl font-cinzel font-bold tracking-widest text-white uppercase">Verifying VIP Access...</h2>\`; 
+                
+                try { 
+                    const response = await fetch(\`\${API_BASE_URL}/api/check-in\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticketId }) }); 
+                    const data = await response.json(); 
+                    
+                    if (data.success) { 
+                        resultView.className = "kiosk-view bg-emerald-luxury active"; 
+                        
+                        // ─── NEW: DISPLAY THE PHOTO OR FALLBACK TO CHECKMARK ───
+                        const visualHtml = capturedImage 
+                            ? \`<img src="\${capturedImage}" class="w-32 h-32 md:w-40 md:h-40 object-cover rounded-full mx-auto mb-6 border-4 border-[#D4AF37] shadow-[0_0_40px_rgba(212,175,55,0.5)]">\`
+                            : \`<i class="fa-solid fa-check-circle text-7xl text-emerald-300 mb-6 drop-shadow-lg"></i>\`;
+
+                        contentBox.innerHTML = \`<div class="scale-110">
+                            \${visualHtml}
+                            <h3 class="text-emerald-100 font-bold tracking-[0.4em] text-lg uppercase mb-4">Thank You</h3>
+                            <h1 class="text-4xl md:text-6xl font-cinzel font-black tracking-wider text-white uppercase leading-tight drop-shadow-2xl mb-4">\${data.name}</h1>
+                            <div class="inline-block px-8 py-2 bg-white/10 backdrop-blur-md rounded-full border border-white/30 font-black tracking-widest uppercase text-lg shadow-inner mb-8">\${data.tier} TIER <span class="opacity-50 mx-2">|</span> ADMIT \${data.qty}</div>
+                            <h2 class="text-2xl md:text-3xl font-cinzel font-bold text-[#D4AF37] tracking-widest drop-shadow-md">Enjoy Your Evening</h2>
+                        </div>\`; 
+                        
+                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3').play(); } catch(e){} 
+                        
+                        // Increased delay to 5.5 seconds so they can see their photo!
+                        autoReset(5500); 
+                    } else { 
+                        resultView.className = "kiosk-view bg-crimson-error active"; 
+                        contentBox.innerHTML = \`<div class="scale-110"><i class="fa-solid fa-triangle-exclamation text-7xl text-rose-300 mb-6 drop-shadow-lg"></i><h1 class="text-5xl md:text-6xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Access Denied</h1><div class="inline-block px-8 py-4 bg-black/40 backdrop-blur-md rounded-2xl border border-rose-500/50 font-bold text-rose-100 text-xl tracking-wide max-w-xl">\${data.message}</div><div class="mt-12"><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-rose-900 rounded-full font-black uppercase tracking-widest shadow-xl hover:scale-105 transition-transform">Return to Home</button></div></div>\`; 
+                        try { new Audio('https://www.soundjay.com/buttons/sounds/button-10.mp3').play(); } catch(e){} 
+                        autoReset(8000); 
+                    } 
+                } catch (err) { 
+                    resultView.className = "kiosk-view bg-[#b45309] active"; 
+                    contentBox.innerHTML = \`<i class="fa-solid fa-wifi text-7xl text-white mb-6"></i><h1 class="text-4xl font-cinzel font-black tracking-wider text-white uppercase drop-shadow-2xl mb-6">Network Error</h1><p class="text-xl text-orange-100 mb-10">Unable to reach the secure database. Please check your internet connection.</p><button onclick="cancelToHome()" class="px-10 py-4 bg-white text-orange-900 rounded-full font-black uppercase tracking-widest shadow-xl">Return to Home</button>\`; 
+                    autoReset(8000); 
+                } 
+            }
+            
+            function autoReset(delayMs) { 
+                if (resetTimer) clearTimeout(resetTimer); 
+                resetTimer = setTimeout(() => { cancelToHome(); }, delayMs); 
+            }
         </script>
     </body>
     </html>
