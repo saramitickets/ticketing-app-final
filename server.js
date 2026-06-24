@@ -639,7 +639,13 @@ app.get('/scanner', (req, res) => {
             function switchView(viewId) { document.querySelectorAll('.kiosk-view').forEach(v => v.classList.remove('active')); document.getElementById(viewId).classList.add('active'); }
             function cancelToHome() { if (html5QrcodeScanner) html5QrcodeScanner.pause(true); document.getElementById('search-input').value = ''; switchView('view-welcome'); }
 
-            function startScanning() { switchView('view-scanner'); isProcessing = false; if (!html5QrcodeScanner) { html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 15, qrbox: { width: 300, height: 300 }, aspectRatio: 1.0 }, false); html5QrcodeScanner.render(onScanSuccess, () => {}); } else { html5QrcodeScanner.resume(); } }
+            function startScanning() { switchView('view-scanner'); isProcessing = false; if (!html5QrcodeScanner) { html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+    fps: 15, 
+    qrbox: { width: 250, height: 250 }, 
+    aspectRatio: 1.0,
+    disableFlip: false, // <--- This fixes the opposite reflection!
+    supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+}, false);; html5QrcodeScanner.render(onScanSuccess, () => {}); } else { html5QrcodeScanner.resume(); } }
             function onScanSuccess(decodedText) { if (isProcessing) return; isProcessing = true; html5QrcodeScanner.pause(true); try { const qrData = JSON.parse(decodedText); processTicket(qrData.ticketID || decodedText); } catch (e) { processTicket(decodedText); } }
 
             async function openManualSearch() { switchView('view-manual'); document.getElementById('search-input').value = ''; document.getElementById('search-results').innerHTML = \`<div class="text-center text-slate-500 mt-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i><br>Syncing Database...</div>\`; try { const response = await fetch(\`\${API_BASE_URL}/api/live-stats\`); const data = await response.json(); if (data.success) { liveGuestList = data.allOrders.filter(order => order.status === 'paid'); filterGuests(); } } catch (error) { document.getElementById('search-results').innerHTML = \`<div class="text-center text-rose-500 mt-10"><i class="fa-solid fa-wifi text-3xl mb-4"></i><br>Connection Failed.</div>\`; } }
