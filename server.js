@@ -599,6 +599,11 @@ app.get('/scanner', (req, res) => {
             #reader button { background-color: #D4AF37; color: #00205B; padding: 0.75rem 1.5rem; border-radius: 999px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; transition: all 0.3s; margin: 0.5rem; }
             .gold-text { background: linear-gradient(to bottom, #FDE047, #D4AF37, #A16207); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
             ::-webkit-scrollbar { display: none; }
+            /* OVERRIDE: Force the video feed to stop mirroring */
+#reader video {
+    transform: none !important;
+    -webkit-transform: none !important;
+}
         </style>
     </head>
     <body>
