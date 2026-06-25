@@ -20,7 +20,11 @@ try {
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-    db = admin.firestore();
+    db = admin.firestore();db.listCollections().then(collections => {
+    console.log("DEBUG: Connected to collections:", collections.map(c => c.id));
+}).catch(err => {
+    console.error("DEBUG: Connection test failed:", err);
+});
     console.log("✅ Firebase Initialized");
 } catch (error) {
     console.error("❌ Firebase init failed:", error);
