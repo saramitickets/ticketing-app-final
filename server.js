@@ -875,7 +875,10 @@ app.get('/api/live-stats', async (req, res) => {
             lastUpdated: new Date().toISOString() 
         });
     } catch (e) {
-        console.error('[STATS ERROR]', e.message);
+        // --- DEEP ERROR TRACE ADDED ---
+        console.error('[STATS ERROR DEEP TRACE]', JSON.stringify(e, null, 2));
+        console.error('[STATS ERROR RAW]', e);
+        // ------------------------------
         res.status(500).json({ success: false, error: 'Could not fetch stats' });
     }
 });
