@@ -17,14 +17,23 @@ const MAINTENANCE_MODE = process.env.MAINTENANCE_MODE === 'true';
 let db;
 try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    
+    // --- THE FIX: Restore escaped newlines in the private key ---
+    if (serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
+    // ------------------------------------------------------------
+
     if (!admin.apps.length) {
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-    db = admin.firestore();db.listCollections().then(collections => {
-    console.log("DEBUG: Connected to collections:", collections.map(c => c.id));
-}).catch(err => {
-    console.error("DEBUG: Connection test failed:", err);
-});
+    
+    db = admin.firestore();
+    db.listCollections().then(collections => {
+        console.log("DEBUG: Connected to collections:", collections.map(c => c.id));
+    }).catch(err => {
+        console.error("DEBUG: Connection test failed:", err);
+    });
     console.log("✅ Firebase Initialized");
 } catch (error) {
     console.error("❌ Firebase init failed:", error);
