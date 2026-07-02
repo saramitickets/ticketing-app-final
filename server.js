@@ -31,7 +31,7 @@ const app = express();
 const EVENT_CONFIGS = {
     'DG_BANQUET_2026': {
         title: "DISTRICT GOVERNOR'S BANQUET 2026",
-        emailSubject: "🎫 Your VIP Pass: District Governor's Banquet",
+        emailSubject: "🎫 Your Entry Pass: District Governor's Banquet",
         venue: "Lions Service Centre, Loresho • July 18th, 2026 at 6:30 PM",
         primaryColor: "#00338D", // Lions Blue
         accentColor: "#F2A900",  // Lions Gold
@@ -41,7 +41,7 @@ const EVENT_CONFIGS = {
     },
     'DANCE_2_EDUCATE_2026': {
         title: "DANCE 2 EDUCATE - CHARITY EVENT",
-        emailSubject: "🪩 Your Ticket: Dance 2 Educate",
+        emailSubject: "🪩 Your Entry Pass: Dance 2 Educate",
         venue: "Carnivore Grounds, Simba Saloon",
         primaryColor: "#4F46E5", // Indigo 600
         accentColor: "#EC4899",  // Pink 500
@@ -124,7 +124,7 @@ async function sendConfirmationEmail(orderData, orderId) {
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
         sendSmtpEmail.subject = config.emailSubject; 
         
-        // Refined VIP HTML Template
+        // Refined HTML Template with Gold Shapes & New Copy
         sendSmtpEmail.htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -143,12 +143,12 @@ async function sendConfirmationEmail(orderData, orderId) {
                             
                             <tr>
                                 <td align="center" style="padding: 50px 40px 30px 40px;">
-                                    <h2 style="color: ${config.primaryColor}; margin-top: 0; font-family: 'Georgia', serif; font-size: 24px; font-weight: normal; letter-spacing: 1px;">Your Exclusive Gala Access is Secured</h2>
+                                    <h2 style="color: ${config.primaryColor}; margin-top: 0; font-family: 'Georgia', serif; font-size: 24px; font-weight: normal; letter-spacing: 1px;">Your Gala Access is Secured</h2>
                                     <div style="width: 40px; height: 2px; background-color: ${config.accentColor}; margin: 20px auto;"></div>
-                                    <p style="color: #475569; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">The honor of your presence is requested. Welcome, <strong>${orderData.payerName}</strong>. Your reservation is confirmed, and your VIP entry pass has been formally issued.</p>
+                                    <p style="color: #475569; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">The honor of your presence is requested. Welcome, <strong>${orderData.payerName}</strong>. Your reservation is confirmed, and your entry pass has been formally issued.</p>
                                     
                                     <a href="${downloadLink}" style="display: inline-block; background: ${config.buttonGradient}; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 16px 35px; border-radius: 2px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
-                                        View Official E-Ticket
+                                        View Official Entry Pass
                                     </a>
                                 </td>
                             </tr>
@@ -160,25 +160,33 @@ async function sendConfirmationEmail(orderData, orderId) {
                                         
                                         <img src="${qrImageUrl}" width="160" height="160" alt="Your QR Code" style="display: block; margin: 0 auto; border: 4px solid #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
                                         
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 35px; text-align: left; border-top: 1px solid #e2e8f0; padding-top: 25px;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 35px; text-align: left; border-top: 1px solid #e2e8f0; padding-top: 35px;">
                                             <tr>
-                                                <td style="padding-bottom: 15px;">
-                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Guest of Honor</p>
-                                                    <p style="margin: 4px 0 0 0; font-size: 15px; color: #0f172a; font-family: 'Georgia', serif;">${orderData.payerName}</p>
+                                                <td style="padding-bottom: 25px;">
+                                                    <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Name of Guest</p>
+                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                                        <span style="font-size: 16px; color: #0f172a; font-family: 'Georgia', serif; font-weight: bold;">${orderData.payerName}</span>
+                                                    </div>
                                                 </td>
-                                                <td align="right" style="padding-bottom: 15px;">
-                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Admit</p>
-                                                    <p style="margin: 4px 0 0 0; font-size: 15px; color: #0f172a; font-family: 'Georgia', serif;">${orderData.quantity} Guest(s)</p>
+                                                <td align="right" style="padding-bottom: 25px;">
+                                                    <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Admit</p>
+                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                                        <span style="font-size: 16px; color: #0f172a; font-family: 'Georgia', serif; font-weight: bold;">${orderData.quantity} Person(s)</span>
+                                                    </div>
                                                 </td>
                                             </tr>
                                             <tr>
                                                 <td>
-                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Tier</p>
-                                                    <p style="margin: 4px 0 0 0; font-size: 15px; color: ${config.primaryColor}; font-weight: bold;">${orderData.packageTier}</p>
+                                                    <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Access Tier</p>
+                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                                        <span style="font-size: 15px; color: ${config.primaryColor}; font-weight: bold;">${orderData.packageTier}</span>
+                                                    </div>
                                                 </td>
                                                 <td align="right">
-                                                    <p style="margin: 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Date</p>
-                                                    <p style="margin: 4px 0 0 0; font-size: 14px; color: #0f172a; font-family: 'Georgia', serif;">${config.venue.split('•')[1] ? config.venue.split('•')[1].trim() : 'TBA'}</p>
+                                                    <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Date</p>
+                                                    <div style="background: linear-gradient(135deg, #f8fafc, #f1f5f9); border: 1px solid #cbd5e1; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                                        <span style="font-size: 14px; color: #334155; font-family: 'Georgia', serif; font-weight: bold;">${config.venue.split('•')[1] ? config.venue.split('•')[1].trim() : 'TBA'}</span>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         </table>
@@ -254,9 +262,9 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>VIP Access - ${orderData.payerName}</title>
+            <title>Entry Pass - ${orderData.payerName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;600&display=swap" rel="stylesheet">
+            <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
             <style>
                 body { font-family: 'Montserrat', sans-serif; background-color: #f8fafc; }
                 .serif-font { font-family: 'Playfair Display', serif; }
@@ -301,28 +309,39 @@ app.get('/api/ticket/:orderId', async (req, res) => {
                 </div>
 
                 <div class="p-10 bg-white relative z-10 flex-grow">
-                    <div class="grid grid-cols-2 gap-y-8 gap-x-6 text-left">
+                    <div class="grid grid-cols-2 gap-y-8 gap-x-4 text-left">
+                        
                         <div>
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-1">Guest of Honor</p>
-                            <p class="text-lg text-gray-900 serif-font">${orderData.payerName}</p>
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Name of Guest</p>
+                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-900 px-4 py-2.5 rounded-lg shadow-sm serif-font text-base sm:text-lg font-semibold inline-block">
+                                ${orderData.payerName}
+                            </div>
                         </div>
-                        <div class="text-right">
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-1">Access Tier</p>
-                            <p class="text-lg serif-font" style="color: ${config.primaryColor}; font-weight: 600;">${orderData.packageTier}</p>
+                        <div class="text-right flex flex-col items-end">
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 mr-1">Access Tier</p>
+                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] px-4 py-2.5 rounded-lg shadow-sm serif-font text-base sm:text-lg font-bold inline-block" style="color: ${config.primaryColor};">
+                                ${orderData.packageTier}
+                            </div>
                         </div>
                         
                         <div>
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-1">Admit</p>
-                            <p class="text-base text-gray-900 serif-font">${orderData.quantity} Person(s)</p>
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Admit</p>
+                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-900 px-4 py-2 rounded-lg shadow-sm serif-font text-base font-medium inline-block">
+                                ${orderData.quantity} Person(s)
+                            </div>
                         </div>
-                        <div class="text-right">
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-1">Dietary/Notes</p>
-                            <p class="text-sm text-gray-600">${orderData.dietaryPreference || 'None Specified'}</p>
+                        <div class="text-right flex flex-col items-end">
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 mr-1">Dietary/Notes</p>
+                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-700 px-4 py-2 rounded-lg shadow-sm text-sm font-medium inline-block">
+                                ${orderData.dietaryPreference || 'None Specified'}
+                            </div>
                         </div>
                         
                         <div class="col-span-2 border-t border-gray-100 pt-6 mt-2">
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2">Venue & Information</p>
-                            <p class="text-sm text-gray-800 leading-relaxed">${config.venue.replace('•', '<br><span class="text-gray-500 text-xs mt-1 block">')}</span></p>
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Venue & Information</p>
+                            <div class="bg-slate-50 border border-slate-200 text-gray-800 px-4 py-3.5 rounded-lg shadow-sm text-sm leading-relaxed block">
+                                ${config.venue.replace('•', '<br><span class="text-gray-500 text-xs mt-1 block">')}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -557,7 +576,6 @@ app.post('/api/payment-callback', async (req, res) => {
             .eq('id', orderId);
 
         if (isSuccess) {
-            // Re-fetch updated doc just to be safe
             const { data: updatedDoc } = await supabase.from('orders').select('*').eq('id', orderId).single();
             sendConfirmationEmail(updatedDoc, orderId).catch(console.error);
         }
@@ -667,7 +685,6 @@ app.get('/api/live-stats', async (req, res) => {
                 if (data.packageTier === 'LEOS') leosCount += qty;
             }
             
-            // Supabase returns timestamps as ISO strings
             let timeObj = data.updatedAt ? new Date(data.updatedAt) : new Date(data.createdAt);
 
             allOrders.push({
@@ -691,7 +708,6 @@ app.get('/api/live-stats', async (req, res) => {
             });
         });
 
-        // Re-sort just to be absolutely certain
         allOrders.sort((a, b) => b.time - a.time);
         
         const recentOrders = allOrders.filter(o => o.status === 'paid').slice(0, 15);
@@ -740,9 +756,6 @@ app.post('/api/resend-ticket/:id', async (req, res) => {
 });
 
 // ─── DELETE RECORD ENDPOINT ───
-// Note: This endpoint is already structured to delete ANY row by ID, 
-// meaning it will securely handle both FAILED and PAID tickets. 
-// Just ensure your frontend passes the correct ID.
 app.delete('/api/delete-record/:id', async (req, res) => {
     try {
         const docId = req.params.id;
