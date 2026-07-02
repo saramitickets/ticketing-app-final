@@ -102,7 +102,7 @@ async function getAuthToken() {
     }
 }
 
-// ─── PRESTIGIOUS E-TICKET EMAIL FUNCTION ───
+// ─── LUXURY E-TICKET EMAIL FUNCTION ───
 async function sendConfirmationEmail(orderData, orderId) {
     try {
         console.log(`[EMAIL] Generating Ticket for ${orderData.payerEmail}`);
@@ -124,7 +124,7 @@ async function sendConfirmationEmail(orderData, orderId) {
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
         sendSmtpEmail.subject = config.emailSubject; 
         
-        // Refined HTML Template with Gold Shapes & New Copy
+        // Luxury HTML Email Template (Inline Styles for Email Clients)
         sendSmtpEmail.htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -135,8 +135,8 @@ async function sendConfirmationEmail(orderData, orderId) {
                         <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 4px; overflow: hidden; box-shadow: 0 15px 35px rgba(0,0,0,0.1); max-width: 600px; width: 100%; border: 1px solid #e2e8f0;">
                             
                             <tr>
-                                <td style="background: ${config.bgGradient}; padding: 45px 20px; text-align: center; border-bottom: 4px solid ${config.accentColor};">
-                                    <h1 style="color: #ffffff; margin: 0; font-family: 'Georgia', serif; font-size: 26px; letter-spacing: 6px; text-transform: uppercase; font-weight: normal;">${config.ticketHeader}</h1>
+                                <td style="background: ${config.bgGradient}; padding: 45px 20px; text-align: center; border-bottom: 4px solid ${config.accentColor}; position: relative;">
+                                    <h1 style="color: #ffffff; margin: 0; font-family: 'Georgia', serif; font-size: 28px; letter-spacing: 6px; text-transform: uppercase; font-weight: normal; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">${config.ticketHeader}</h1>
                                     <p style="color: ${config.accentColor}; margin: 15px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase;">${config.title}</p>
                                 </td>
                             </tr>
@@ -144,10 +144,10 @@ async function sendConfirmationEmail(orderData, orderId) {
                             <tr>
                                 <td align="center" style="padding: 50px 40px 30px 40px;">
                                     <h2 style="color: ${config.primaryColor}; margin-top: 0; font-family: 'Georgia', serif; font-size: 24px; font-weight: normal; letter-spacing: 1px;">Your Gala Access is Secured</h2>
-                                    <div style="width: 40px; height: 2px; background-color: ${config.accentColor}; margin: 20px auto;"></div>
+                                    <div style="width: 50px; height: 2px; background: linear-gradient(to right, #BF953F, #FCF6BA, #B38728); margin: 20px auto;"></div>
                                     <p style="color: #475569; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">The honor of your presence is requested. Welcome, <strong>${orderData.payerName}</strong>. Your reservation is confirmed, and your entry pass has been formally issued.</p>
                                     
-                                    <a href="${downloadLink}" style="display: inline-block; background: ${config.buttonGradient}; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 16px 35px; border-radius: 2px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
+                                    <a href="${downloadLink}" style="display: inline-block; background: linear-gradient(135deg, #BF953F, #B38728); color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 18px 40px; border-radius: 4px; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 4px 15px rgba(179, 135, 40, 0.4); border: 1px solid #AA771C;">
                                         View Official Entry Pass
                                     </a>
                                 </td>
@@ -155,36 +155,42 @@ async function sendConfirmationEmail(orderData, orderId) {
 
                             <tr>
                                 <td style="padding: 10px 40px 40px 40px;">
-                                    <div style="border: 1px solid #e2e8f0; padding: 35px; text-align: center; background-color: #fafaf9;">
+                                    <div style="border: 1px solid #e2e8f0; padding: 35px; text-align: center; background-color: #fafaf9; position: relative;">
                                         <p style="margin: 0 0 25px 0; font-size: 12px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 3px;">Entry Credentials</p>
                                         
-                                        <img src="${qrImageUrl}" width="160" height="160" alt="Your QR Code" style="display: block; margin: 0 auto; border: 4px solid #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                                        <img src="${qrImageUrl}" width="160" height="160" alt="Your QR Code" style="display: block; margin: 0 auto; border: 4px solid #ffffff; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                         
                                         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 35px; text-align: left; border-top: 1px solid #e2e8f0; padding-top: 35px;">
                                             <tr>
-                                                <td style="padding-bottom: 25px;">
+                                                <td style="padding-bottom: 25px; width: 50%;">
                                                     <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Name of Guest</p>
-                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                                                        <span style="font-size: 16px; color: #0f172a; font-family: 'Georgia', serif; font-weight: bold;">${orderData.payerName}</span>
+                                                    <div style="background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%); padding: 2px; border-radius: 6px; display: inline-block;">
+                                                        <div style="background: linear-gradient(135deg, #fdfbf7, #fffcf5); padding: 12px 20px; border-radius: 4px;">
+                                                            <span style="font-size: 17px; color: #00205B; font-family: 'Georgia', serif; font-weight: bold;">${orderData.payerName}</span>
+                                                        </div>
                                                     </div>
                                                 </td>
-                                                <td align="right" style="padding-bottom: 25px;">
+                                                <td align="right" style="padding-bottom: 25px; width: 50%;">
                                                     <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Admit</p>
-                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                                                        <span style="font-size: 16px; color: #0f172a; font-family: 'Georgia', serif; font-weight: bold;">${orderData.quantity} Person(s)</span>
+                                                    <div style="background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%); padding: 2px; border-radius: 6px; display: inline-block;">
+                                                        <div style="background: linear-gradient(135deg, #fdfbf7, #fffcf5); padding: 12px 20px; border-radius: 4px;">
+                                                            <span style="font-size: 17px; color: #00205B; font-family: 'Georgia', serif; font-weight: bold;">${orderData.quantity} Person(s)</span>
+                                                        </div>
                                                     </div>
                                                 </td>
                                             </tr>
                                             <tr>
                                                 <td>
                                                     <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Access Tier</p>
-                                                    <div style="background: linear-gradient(135deg, #fffcf5, #fdf5e6); border: 1px solid #e8c37c; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                                                        <span style="font-size: 15px; color: ${config.primaryColor}; font-weight: bold;">${orderData.packageTier}</span>
+                                                    <div style="background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%); padding: 2px; border-radius: 6px; display: inline-block;">
+                                                        <div style="background: linear-gradient(135deg, #fdfbf7, #fffcf5); padding: 12px 20px; border-radius: 4px;">
+                                                            <span style="font-size: 16px; color: #00205B; font-family: 'Georgia', serif; font-weight: bold;">${orderData.packageTier}</span>
+                                                        </div>
                                                     </div>
                                                 </td>
                                                 <td align="right">
                                                     <p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">Date</p>
-                                                    <div style="background: linear-gradient(135deg, #f8fafc, #f1f5f9); border: 1px solid #cbd5e1; padding: 10px 16px; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                                    <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 12px 20px; border-radius: 6px; display: inline-block;">
                                                         <span style="font-size: 14px; color: #334155; font-family: 'Georgia', serif; font-weight: bold;">${config.venue.split('•')[1] ? config.venue.split('•')[1].trim() : 'TBA'}</span>
                                                     </div>
                                                 </td>
@@ -215,7 +221,6 @@ async function sendConfirmationEmail(orderData, orderId) {
         await apiInstance.sendTransacEmail(sendSmtpEmail);
         console.log(`[EMAIL] Ticket successfully sent to ${orderData.payerEmail}`);
 
-        // Update emailStatus in Supabase
         await supabase
             .from('orders')
             .update({ emailStatus: 'SENT', updatedAt: new Date().toISOString() })
@@ -230,7 +235,7 @@ async function sendConfirmationEmail(orderData, orderId) {
     }
 }
 
-// ─── PRESTIGIOUS WEB TICKET DOWNLOAD ENDPOINT ───
+// ─── LUXURY WEB TICKET DOWNLOAD ENDPOINT ───
 app.get('/api/ticket/:orderId', async (req, res) => {
     try {
         const { data: orderData, error } = await supabase
@@ -264,83 +269,133 @@ app.get('/api/ticket/:orderId', async (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Entry Pass - ${orderData.payerName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+            <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
             <style>
                 body { font-family: 'Montserrat', sans-serif; background-color: #f8fafc; }
                 .serif-font { font-family: 'Playfair Display', serif; }
-                .print-btn { display: block; }
-                .gold-border { position: relative; }
-                .gold-border::after {
+                .cinzel-font { font-family: 'Cinzel', serif; }
+                
+                /* Luxury Gold Plate Styles */
+                .gold-plate {
+                    position: relative;
+                    background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%);
+                    padding: 2px; /* acts as the border thickness */
+                    border-radius: 6px;
+                    box-shadow: 0 4px 15px rgba(179, 135, 40, 0.3), inset 0 0 10px rgba(255,255,255,0.5);
+                    overflow: hidden;
+                    display: inline-block;
+                    width: 100%;
+                }
+                .gold-inner {
+                    background: linear-gradient(135deg, #fdfbf7 0%, #fffcf5 100%);
+                    border-radius: 4px;
+                    padding: 12px 16px;
+                    height: 100%;
+                    position: relative;
+                    z-index: 2;
+                }
+                .gold-text {
+                    color: #00205B; /* Deep Navy to pop against gold */
+                    text-shadow: 0px 1px 1px rgba(255,255,255,1);
+                }
+                
+                /* Shimmer Animation */
+                .gold-plate::after {
                     content: '';
                     position: absolute;
-                    top: 8px; left: 8px; right: 8px; bottom: 8px;
-                    border: 1px solid ${config.accentColor}40;
-                    pointer-events: none;
+                    top: -50%;
+                    left: -50%;
+                    width: 200%;
+                    height: 200%;
+                    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.8) 50%, rgba(255,255,255,0) 100%);
+                    transform: rotate(30deg);
+                    animation: shimmer 4s infinite linear;
+                    z-index: 1;
                 }
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%) rotate(30deg); }
+                    100% { transform: translateX(100%) rotate(30deg); }
+                }
+
+                .print-btn { display: block; }
                 @media print {
                     .print-btn { display: none !important; }
                     body { background-color: white; }
                     .ticket-container { box-shadow: none !important; border: none !important; }
+                    .gold-plate::after { display: none; } /* Disable animation on print */
                 }
             </style>
         </head>
         <body class="flex flex-col items-center justify-center min-h-screen p-4 py-10">
             
             <div class="mb-8 print-btn">
-                <button onclick="window.print()" class="text-white text-sm font-semibold uppercase tracking-widest px-8 py-4 rounded shadow-lg hover:shadow-xl transition duration-300" style="background: ${config.buttonGradient}">
+                <button onclick="window.print()" class="text-white text-sm font-semibold uppercase tracking-widest px-8 py-4 rounded shadow-lg hover:shadow-xl transition duration-300" style="background: linear-gradient(135deg, #BF953F, #B38728);">
                     <svg class="w-4 h-4 inline mr-2 -mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     Download Official Pass
                 </button>
             </div>
 
-            <div class="ticket-container bg-white w-full max-w-md relative shadow-2xl border border-gray-200 gold-border flex flex-col">
+            <div class="ticket-container bg-white w-full max-w-md relative shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
                 
+                <!-- Ticket Header -->
                 <div class="p-10 text-center relative z-10" style="background: ${config.bgGradient}; border-bottom: 4px solid ${config.accentColor};">
-                    <h1 class="text-3xl text-white tracking-[0.2em] uppercase serif-font">${config.ticketHeader}</h1>
+                    <h1 class="text-3xl text-white tracking-[0.2em] uppercase cinzel-font font-bold text-shadow-md">${config.ticketHeader}</h1>
                     <p class="text-[10px] font-bold tracking-[0.3em] mt-3 uppercase" style="color: ${config.accentColor};">${config.title}</p>
                 </div>
                 
+                <!-- Ticket QR -->
                 <div class="p-10 text-center relative z-10 bg-[#fafaf9] border-b border-gray-200">
                     <p class="serif-font italic text-gray-500 mb-6 text-lg">The Honor of Your Presence is Requested</p>
-                    <div class="bg-white p-3 inline-block rounded-sm shadow-sm border border-gray-100">
+                    <div class="bg-white p-3 inline-block rounded-sm shadow-md border border-gray-100">
                         <img src="${qrImageUrl}" alt="QR Code" class="w-48 h-48 mx-auto">
                     </div>
                     <p class="mt-4 text-[10px] font-mono text-gray-400 tracking-widest uppercase">ID: ${req.params.orderId.substring(0,12)}</p>
                 </div>
 
+                <!-- Ticket Details -->
                 <div class="p-10 bg-white relative z-10 flex-grow">
                     <div class="grid grid-cols-2 gap-y-8 gap-x-4 text-left">
                         
-                        <div>
+                        <div class="flex flex-col">
                             <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Name of Guest</p>
-                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-900 px-4 py-2.5 rounded-lg shadow-sm serif-font text-base sm:text-lg font-semibold inline-block">
-                                ${orderData.payerName}
-                            </div>
-                        </div>
-                        <div class="text-right flex flex-col items-end">
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 mr-1">Access Tier</p>
-                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] px-4 py-2.5 rounded-lg shadow-sm serif-font text-base sm:text-lg font-bold inline-block" style="color: ${config.primaryColor};">
-                                ${orderData.packageTier}
+                            <div class="gold-plate">
+                                <div class="gold-inner flex items-center h-full">
+                                    <span class="cinzel-font text-base sm:text-lg font-bold gold-text leading-tight">${orderData.payerName}</span>
+                                </div>
                             </div>
                         </div>
                         
-                        <div>
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Admit</p>
-                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-900 px-4 py-2 rounded-lg shadow-sm serif-font text-base font-medium inline-block">
-                                ${orderData.quantity} Person(s)
+                        <div class="flex flex-col">
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 text-right mr-1">Access Tier</p>
+                            <div class="gold-plate">
+                                <div class="gold-inner flex items-center justify-end h-full">
+                                    <span class="cinzel-font text-base sm:text-lg font-bold gold-text tracking-wide">${orderData.packageTier}</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="text-right flex flex-col items-end">
-                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 mr-1">Dietary/Notes</p>
-                            <div class="bg-gradient-to-br from-[#FFF8E7] to-[#FDF5E6] border border-[#E8C37C] text-gray-700 px-4 py-2 rounded-lg shadow-sm text-sm font-medium inline-block">
-                                ${orderData.dietaryPreference || 'None Specified'}
+                        
+                        <div class="flex flex-col">
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Admit</p>
+                            <div class="gold-plate">
+                                <div class="gold-inner flex items-center h-full">
+                                    <span class="cinzel-font text-sm sm:text-base font-bold gold-text">${orderData.quantity} Person(s)</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-col">
+                            <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 text-right mr-1">Dietary/Notes</p>
+                            <div class="gold-plate">
+                                <div class="gold-inner flex items-center justify-end h-full">
+                                    <span class="cinzel-font text-sm font-bold gold-text">${orderData.dietaryPreference || 'None'}</span>
+                                </div>
                             </div>
                         </div>
                         
                         <div class="col-span-2 border-t border-gray-100 pt-6 mt-2">
                             <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Venue & Information</p>
-                            <div class="bg-slate-50 border border-slate-200 text-gray-800 px-4 py-3.5 rounded-lg shadow-sm text-sm leading-relaxed block">
-                                ${config.venue.replace('•', '<br><span class="text-gray-500 text-xs mt-1 block">')}</span>
+                            <div class="bg-slate-50 border border-slate-200 text-gray-800 px-5 py-4 rounded-lg shadow-inner text-sm leading-relaxed block">
+                                ${config.venue.replace('•', '<br><span class="text-gray-500 text-xs mt-1.5 block">')}</span>
                             </div>
                         </div>
                     </div>
