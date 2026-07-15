@@ -454,7 +454,12 @@ app.post('/api/create-order', async (req, res) => {
 
         const token = await getAuthToken();
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
+        
+        // --- ADDED PHONE VALIDATION ---
         const formattedPhone = formatPhone(payerPhone);
+        if (!formattedPhone || formattedPhone.length < 10) {
+            throw new Error("Invalid phone number format provided for STK push.");
+        }
 
         const payload = {
             transactionId: merchantTxId,
@@ -612,6 +617,13 @@ app.post('/api/payment-callback', async (req, res) => {
         const isSuccess = [0, '0', 200, '200'].includes(resultCode) || ['SUCCESS', 'COMPLETED', 'PAID'].includes(statusStr);
         const reason = data.message || data.ResultDesc || data.resultDesc || data.ResultDescription || 'No reason provided';
         
+        // --- ADDED WEBHOOK LOGGING ---
+        if (!isSuccess) {
+            console.warn(`[PAYMENT FAILED] Order: ${orderId} | Phone: ${orderDoc?.payerPhone || 'N/A'} | Reason: ${reason}`);
+        } else {
+            console.log(`[PAYMENT SUCCESS] Order: ${orderId} | Status: PAID`);
+        }
+
         let receipt = 'N/A';
         if (resultsObj.mnoRef && resultsObj.mnoRef !== "0") receipt = resultsObj.mnoRef;
         else if (data.MpesaReceiptNumber) receipt = data.MpesaReceiptNumber;
@@ -636,7 +648,8 @@ app.post('/api/payment-callback', async (req, res) => {
         }
 
     } catch (e) {
-        console.error('[DB UPDATE ERROR]', e.message);
+        // --- ENHANCED DB LOGGING ---
+        console.error('[DB UPDATE ERROR] Failed to process callback for Order:', orderId, 'Error:', e);
     }
 
     res.status(200).send('OK');
