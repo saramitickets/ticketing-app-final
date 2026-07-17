@@ -3,6 +3,8 @@
 // MULTI-EVENT GATEWAY
 // ==========================================
 const express = require('express');
+const http = require('http'); // ADDED for Socket.io
+const { Server } = require('socket.io'); // ADDED for Socket.io
 const axios = require('axios');
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
@@ -26,6 +28,12 @@ apiKey.apiKey = process.env.BREVO_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
 const app = express();
+
+// --- ADDED: SERVER & SOCKET INITIALIZATION ---
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
 
 // ─── EVENT CONFIGURATION DICTIONARY ───
 const EVENT_CONFIGS = {
@@ -655,7 +663,7 @@ app.post('/api/payment-callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// ─── SCANNER CHECK-IN API ENDPOINT ───
+// ─── SCANNER CHECK-IN API ENDPOINT (UPDATED FOR WEBSOCKETS) ───
 app.post('/api/check-in', async (req, res) => {
     const { ticketId } = req.body;
     
@@ -668,13 +676,18 @@ app.post('/api/check-in', async (req, res) => {
             .eq('id', ticketId)
             .single();
         
-        if (error || !orderDoc) return res.json({ success: false, message: "Invalid Ticket: Ticket not found." });
+        if (error || !orderDoc) {
+            io.emit('scan_error', { message: 'Invalid Ticket: Ticket not found.' }); // 🔴 PUSH ERROR
+            return res.json({ success: false, message: "Invalid Ticket: Ticket not found." });
+        }
         
         if (orderDoc.status !== 'PAID') {
+            io.emit('scan_error', { message: `Ticket Unpaid. Current Status: ${orderDoc.status}` }); // 🔴 PUSH ERROR
             return res.json({ success: false, message: `Ticket Unpaid. Current Status: ${orderDoc.status}` });
         }
 
         if (orderDoc.attended) {
+            io.emit('scan_error', { message: 'Ticket Already Used!' }); // 🔴 PUSH ERROR
             return res.json({ success: false, message: "Ticket Already Used!" });
         }
         
@@ -686,9 +699,17 @@ app.post('/api/check-in', async (req, res) => {
             })
             .eq('id', ticketId);
         
+        // 🟢 PUSH SUCCESS
+        io.emit('vip_checked_in', { 
+            name: orderDoc.payerName, 
+            tier: orderDoc.packageTier, 
+            qty: orderDoc.quantity 
+        });
+
         res.json({ success: true, name: orderDoc.payerName, tier: orderDoc.packageTier, qty: orderDoc.quantity });
     } catch (e) {
         console.error("[SCANNER ERROR]", e);
+        io.emit('scan_error', { message: 'System Error communicating with database.' }); // 🔴 PUSH ERROR
         res.status(500).json({ success: false, message: "System Error communicating with database." });
     }
 });
@@ -864,10 +885,11 @@ app.get('/api/order-status/:orderId', async (req, res) => {
 });
 
 // ─── Listen with 0.0.0.0 for Render ───
+// --- CHANGED: Use server.listen instead of app.listen for Socket.io ---
 const HOST = '0.0.0.0';
 const port = process.env.PORT || 10000;
 
-app.listen(port, HOST, () => {
+server.listen(port, HOST, () => {
   console.log(`Server listening on http://${HOST}:${port}`);
   console.log(`Using NODE_ENV=${process.env.NODE_ENV || 'development'}`);
 });
