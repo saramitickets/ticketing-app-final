@@ -80,6 +80,13 @@ const EVENT_CONFIGS = {
 const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', LIONS: 'Lions', LEOS: 'Leos' };
 const tierLabel = (t) => TIER_LABELS[t] || t || 'General';
 
+// Guest positions shown on the booking and invite forms (keep in sync with the pages)
+const POSITIONS = [
+    'International Officer', 'PDG', 'GAT', 'District Officer',
+    'New Club Charter Officer', 'New Club Member', 'Leo District Cabinet', 'Other'
+];
+const cleanPosition = (v) => POSITIONS.find(p => p.toLowerCase() === String(v || '').trim().toLowerCase()) || '';
+
 function getEventConfig(eventId) {
     return EVENT_CONFIGS[eventId] || EVENT_CONFIGS['MASS_INDUCTION_2026'];
 }
@@ -242,6 +249,7 @@ async function sendConfirmationEmail(orderData, orderId) {
                                                 </div>
                                             </td>
                                         </tr>
+                                        ${orderData.position ? `<tr><td colspan="2" style="padding-bottom: 25px;">${label('Position')}${plate(esc(orderData.position), 15)}</td></tr>` : ''}
                                         <tr><td colspan="2">${label('Venue')}<span style="font-size: 14px; color: #334155;">${venueText}</span></td></tr>
                                     </table>
                                 </div>
@@ -334,6 +342,8 @@ app.get('/api/ticket/:orderId', async (req, res) => {
                     <div class="gold-plate"><div class="gold-inner"><span class="cinzel-font text-sm font-bold gold-text">${Number(orderData.quantity) || 1} Person(s)</span></div></div></div>
                 <div><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 text-right mr-1">Dietary</p>
                     <div class="gold-plate"><div class="gold-inner text-right"><span class="cinzel-font text-sm font-bold gold-text">${esc(orderData.dietaryPreference || 'None')}</span></div></div></div>
+                ${orderData.position ? `<div class="col-span-2"><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Position</p>
+                    <div class="gold-plate"><div class="gold-inner"><span class="cinzel-font text-sm font-bold gold-text">${esc(orderData.position)}</span></div></div></div>` : ''}
                 <div class="col-span-2 border-t border-gray-100 pt-6 mt-2">
                     <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Venue & Time</p>
                     <div class="bg-slate-50 border border-slate-200 text-gray-800 px-5 py-4 rounded-lg text-sm leading-relaxed">
@@ -376,7 +386,6 @@ app.post('/api/create-order', async (req, res) => {
     const payerPhone = formatPhone(body.payerPhone);
     if (!payerName || !isValidEmail(payerEmail)) return res.status(400).json({ success: false, error: 'Enter your full name and a valid email address.' });
     if (!isValidKePhone(payerPhone)) return res.status(400).json({ success: false, error: 'Enter a valid Safaricom number, e.g. 0712 345 678.' });
-
     const amount = unitPrice * qty; // ← computed on the server, never trusted from the browser
     let createdOrderId;
 
@@ -468,6 +477,10 @@ app.post('/api/rsvp', async (req, res) => {
     const payerPhone = formatPhone(body.payerPhone);
     if (!payerName || !isValidEmail(payerEmail)) return res.status(400).json({ success: false, message: 'Enter your full name and a valid email address.' });
     if (!isValidKePhone(payerPhone)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan mobile number, e.g. 0712 345 678.' });
+    const position = cleanPosition(body.position);
+    if (!position) return res.status(400).json({ success: false, message: 'Select your position.' });
+    const clubName = clean(body.clubName, 100);
+    if (!clubName) return res.status(400).json({ success: false, message: 'Enter your club or organisation.' });
 
     try {
         // One RSVP per phone number. If they already RSVP'd, re-send the pass to the email on file.
@@ -490,8 +503,9 @@ app.post('/api/rsvp', async (req, res) => {
             amount: 0,
             quantity: 1,
             packageTier: 'INVITED',
+            position,
             dietaryPreference: clean(body.dietaryPreference || 'None', 30),
-            clubName: clean(body.clubName || 'N/A', 100),
+            clubName,
             eventName: config.title,
             eventId,
             status: 'PAID',          // treated as a valid ticket everywhere else
@@ -528,6 +542,7 @@ app.post('/api/manual-order', requireAdmin, async (req, res) => {
             amount: Number(b.amount) || 0,
             quantity: Number(b.quantity) || 1,
             packageTier: clean(b.packageTier || 'GENERAL', 20).toUpperCase(),
+            position: cleanPosition(b.position) || null,
             dietaryPreference: clean(b.dietaryPreference || 'None', 30),
             clubName: clean(b.clubName || 'N/A', 100),
             eventName: b.eventName || config.title,
@@ -682,6 +697,7 @@ app.post('/api/check-in', requireScanner, async (req, res) => {
             tier: tierLabel(orderDoc.packageTier),
             qty: Number(orderDoc.quantity) || 1,
             club: orderDoc.clubName,
+            position: orderDoc.position || '',
             diet: orderDoc.dietaryPreference,
             invited: orderDoc.paymentMethod === 'INVITE'
         };
@@ -704,7 +720,7 @@ app.get('/api/guest-list', requireScanner, async (req, res) => {
         const config = findEvent(req.query.eventId);
         if (!config) return res.status(400).json({ success: false, message: 'Unknown event.' });
         const { data, error } = await supabase.from('orders')
-            .select('id, payerName, payerPhone, clubName, quantity, packageTier, paymentMethod, attended, checkInTime')
+            .select('id, payerName, payerPhone, clubName, position, quantity, packageTier, paymentMethod, attended, checkInTime')
             .eq('eventId', req.query.eventId).eq('status', 'PAID')
             .order('payerName', { ascending: true });
         if (error) throw error;
@@ -715,6 +731,7 @@ app.get('/api/guest-list', requireScanner, async (req, res) => {
                 name: g.payerName || 'Guest',
                 phoneLast4: String(g.payerPhone || '').slice(-4),
                 club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
+                position: g.position || '',
                 qty: Number(g.quantity) || 1,
                 tier: tierLabel(g.packageTier),
                 invited: g.paymentMethod === 'INVITE',
@@ -780,6 +797,7 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
                 email: d.payerEmail || 'N/A',
                 tier: d.packageTier || 'N/A',
                 paymentMethod: d.paymentMethod || 'N/A',
+                position: d.position || 'N/A',
                 clubName: d.clubName || 'N/A',
                 dietaryPreference: d.dietaryPreference || 'None',
                 qty,
