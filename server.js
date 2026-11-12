@@ -629,10 +629,12 @@ app.post('/api/create-order', async (req, res) => {
 });
 
 // ─── INVITED GUESTS: CHECK LINK ───
+// Counts confirmed and waiting RSVPs (declined ones free their place again)
 async function countInvites(eventId) {
     const { count, error } = await supabase.from('orders')
         .select('id', { count: 'exact', head: true })
-        .eq('eventId', eventId).eq('paymentMethod', 'INVITE');
+        .eq('eventId', eventId).eq('paymentMethod', 'INVITE')
+        .in('status', ['PAID', 'PENDING_APPROVAL']);
     if (error) throw error;
     return count || 0;
 }
@@ -641,6 +643,12 @@ function inviteCodeOk(config, code) {
     if (!config?.invite) return false;
     const expected = process.env[config.invite.codeEnv];
     return !!expected && safeEqual(clean(code, 100), expected);
+}
+
+async function isOnGuestList(eventId, phone) {
+    const { data, error } = await supabase.from('invite_list').select('id').eq('eventId', eventId).eq('phone', phone).limit(1);
+    if (error) { console.error('[GUEST LIST LOOKUP ERROR]', error.message); return false; }
+    return !!(data && data.length);
 }
 
 app.get('/api/invite-check', async (req, res) => {
@@ -655,7 +663,9 @@ app.get('/api/invite-check', async (req, res) => {
     }
 });
 
-// ─── INVITED GUESTS: RSVP (FREE, ISSUES QR TICKET) ───
+// ─── INVITED GUESTS: RSVP ───
+// On the guest list: confirmed at once and the QR pass is emailed.
+// Not on the list: saved as PENDING_APPROVAL until an admin approves or declines it.
 app.post('/api/rsvp', async (req, res) => {
     if (MAINTENANCE_MODE) return res.status(503).json({ success: false, error: 'MAINTENANCE_MODE_ACTIVE' });
 
@@ -677,21 +687,32 @@ app.post('/api/rsvp', async (req, res) => {
     if (!clubName) return res.status(400).json({ success: false, message: 'Enter your club or organisation.' });
 
     try {
-        // One RSVP per phone number. If they already RSVP'd, re-send the pass to the email on file.
+        // One RSVP per phone number
         const { data: existing } = await supabase.from('orders').select('*')
-            .eq('eventId', eventId).eq('paymentMethod', 'INVITE').eq('payerPhone', payerPhone).limit(1);
+            .eq('eventId', eventId).eq('paymentMethod', 'INVITE').eq('payerPhone', payerPhone)
+            .order('createdAt', { ascending: false }).limit(1);
         if (existing && existing.length) {
-            await sendConfirmationEmail(existing[0], existing[0].id);
-            return res.status(409).json({
-                success: false, error: 'ALREADY_RSVPD',
-                message: "This phone number has already RSVP'd. We've re-sent the entry pass to the email used at the time."
-            });
+            const prev = existing[0];
+            if (prev.status === 'PAID') {
+                await sendConfirmationEmail(prev, prev.id);
+                return res.status(409).json({ success: false, error: 'ALREADY_RSVPD',
+                    message: "This phone number has already RSVP'd. We've re-sent the entry pass to the email used at the time." });
+            }
+            if (prev.status === 'PENDING_APPROVAL') {
+                return res.status(409).json({ success: false, error: 'ALREADY_PENDING',
+                    message: 'Your RSVP has already been received and is waiting for the organisers to confirm it. Your entry pass will be emailed once it is confirmed.' });
+            }
+            if (prev.status === 'REJECTED') {
+                return res.status(403).json({ success: false, error: 'DECLINED',
+                    message: "We weren't able to confirm an invitation for this number. If you believe this is a mistake, please contact the organisers." });
+            }
         }
 
         if (await countInvites(eventId) >= config.invite.cap) {
             return res.status(410).json({ success: false, error: 'FULL', message: 'Invited-guest places are now full.' });
         }
 
+        const onList = await isOnGuestList(eventId, payerPhone);
         const orderData = {
             payerName, payerEmail, payerPhone,
             amount: 0,
@@ -702,7 +723,7 @@ app.post('/api/rsvp', async (req, res) => {
             clubName,
             eventName: config.title,
             eventId,
-            status: 'PAID',          // treated as a valid ticket everywhere else
+            status: onList ? 'PAID' : 'PENDING_APPROVAL',   // PAID = valid ticket everywhere else
             paymentMethod: 'INVITE',
             emailStatus: 'PENDING',
             attended: false,
@@ -713,13 +734,108 @@ app.post('/api/rsvp', async (req, res) => {
         const { data: newOrder, error } = await supabase.from('orders').insert(orderData).select().single();
         if (error) throw error;
 
+        if (!onList) {
+            console.log(`[RSVP PENDING] ${payerName} (${payerPhone}) for ${eventId}`);
+            io.emit('rsvp_pending', { eventId, name: payerName });
+            return res.json({ success: true, pending: true });
+        }
+
         const emailSent = await sendConfirmationEmail(orderData, newOrder.id);
-        console.log(`[RSVP] ${payerName} (${payerPhone}) for ${eventId}`);
+        console.log(`[RSVP] ${payerName} (${payerPhone}) for ${eventId} (on guest list)`);
         res.json({ success: true, orderId: newOrder.id, emailSent });
     } catch (err) {
         console.error('[RSVP ERROR]', err.message);
         res.status(500).json({ success: false, message: 'Something went wrong saving your RSVP. Please try again.' });
     }
+});
+
+// ─── RSVP APPROVALS (ADMIN) ───
+async function approveRsvp(id) {
+    const { data, error } = await supabase.from('orders')
+        .update({ status: 'PAID', reason: 'Approved by admin', updatedAt: new Date().toISOString() })
+        .eq('id', id).eq('status', 'PENDING_APPROVAL')
+        .select().single();
+    if (error || !data) return { ok: false };
+    const emailSent = await sendConfirmationEmail(data, id);
+    return { ok: true, emailSent, name: data.payerName };
+}
+
+app.post('/api/approve-rsvp/:id', requireAdmin, async (req, res) => {
+    if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'RSVP not found.' });
+    const r = await approveRsvp(req.params.id);
+    if (!r.ok) return res.status(409).json({ success: false, message: 'This RSVP is no longer waiting for approval.' });
+    console.log(`[RSVP APPROVED] ${r.name}`);
+    res.json({ success: true, emailSent: r.emailSent, message: r.emailSent ? 'Approved and entry pass emailed.' : 'Approved, but the email failed. Use "Email ticket again".' });
+});
+
+app.post('/api/reject-rsvp/:id', requireAdmin, async (req, res) => {
+    if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'RSVP not found.' });
+    const { data, error } = await supabase.from('orders')
+        .update({ status: 'REJECTED', reason: 'Declined by admin', updatedAt: new Date().toISOString() })
+        .eq('id', req.params.id).eq('status', 'PENDING_APPROVAL')
+        .select().single();
+    if (error || !data) return res.status(409).json({ success: false, message: 'This RSVP is no longer waiting for approval.' });
+    console.log(`[RSVP DECLINED] ${data.payerName}`);
+    res.json({ success: true, message: 'RSVP declined.' });
+});
+
+// ─── GUEST LIST (ADMIN) ───
+app.get('/api/invite-list', requireAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('invite_list').select('id, name, phone, createdAt')
+            .eq('eventId', req.query.eventId).order('name', { ascending: true });
+        if (error) throw error;
+        res.json({ success: true, entries: data });
+    } catch (e) {
+        console.error('[GUEST LIST ERROR]', e.message);
+        res.status(500).json({ success: false, message: 'Could not load the guest list. Has the invite_list table been created in Supabase?' });
+    }
+});
+
+// Body: { eventId, entries: [{ name, phone }] }. Adds new numbers, skips duplicates,
+// and approves any RSVP already waiting from a number on the list.
+app.post('/api/invite-list', requireAdmin, async (req, res) => {
+    const eventId = req.body?.eventId;
+    if (!findEvent(eventId)) return res.status(400).json({ success: false, message: 'Unknown event.' });
+    const raw = Array.isArray(req.body?.entries) ? req.body.entries.slice(0, 2000) : [];
+
+    const seen = new Set(), rows = [], invalid = [];
+    raw.forEach(e => {
+        const phone = formatPhone(e?.phone);
+        if (!isValidKePhone(phone)) { if (e?.phone || e?.name) invalid.push(clean(e?.phone || e?.name, 40)); return; }
+        if (seen.has(phone)) return;
+        seen.add(phone);
+        rows.push({ eventId, phone, name: clean(e?.name, 80) || null });
+    });
+
+    try {
+        let added = 0;
+        if (rows.length) {
+            const { data, error } = await supabase.from('invite_list')
+                .upsert(rows, { onConflict: 'eventId,phone', ignoreDuplicates: true }).select('id');
+            if (error) throw error;
+            added = data ? data.length : 0;
+        }
+
+        // Auto-approve RSVPs already waiting from these numbers
+        let approved = 0;
+        if (rows.length) {
+            const { data: waiting } = await supabase.from('orders').select('id, payerPhone')
+                .eq('eventId', eventId).eq('status', 'PENDING_APPROVAL').in('payerPhone', rows.map(r => r.phone));
+            for (const w of waiting || []) { if ((await approveRsvp(w.id)).ok) approved++; }
+        }
+
+        res.json({ success: true, added, skipped: rows.length - added, invalid, approved });
+    } catch (e) {
+        console.error('[GUEST LIST ADD ERROR]', e.message);
+        res.status(500).json({ success: false, message: 'Could not save the guest list. Has the invite_list table been created in Supabase?' });
+    }
+});
+
+app.delete('/api/invite-list/:id', requireAdmin, async (req, res) => {
+    const { error } = await supabase.from('invite_list').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ success: false, message: 'Could not remove the entry.' });
+    res.json({ success: true });
 });
 
 // ─── MANUAL TICKET CREATION (ADMIN ONLY) ───
