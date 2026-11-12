@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const MAINTENANCE_MODE = process.env.MAINTENANCE_MODE === 'true';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';              // protects dashboard/admin endpoints
 const SCANNER_PIN = process.env.SCANNER_PIN || '';          // door staff PIN for the scanner page
+const CLIENT_KEY = process.env.CLIENT_KEY || '';            // read-only access code for the organisers' registry page
 const CALLBACK_SECRET = process.env.CALLBACK_SECRET || '';  // secret path segment for payment callbacks
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ticketing-app-final.onrender.com';
 
@@ -114,7 +115,7 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Admin-Key, X-Scanner-Pin');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Admin-Key, X-Scanner-Pin, X-Client-Key');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
 });
@@ -162,6 +163,13 @@ function requireScanner(req, res, next) {
     const pin = req.get('x-scanner-pin');
     if ((SCANNER_PIN && safeEqual(pin, SCANNER_PIN)) || (ADMIN_KEY && safeEqual(pin, ADMIN_KEY))) return next();
     return res.status(401).json({ success: false, message: 'Wrong scanner PIN.' });
+}
+
+// Organisers' read-only registry: accepts the client code (or the admin key)
+function requireClient(req, res, next) {
+    const key = req.get('x-client-key');
+    if ((CLIENT_KEY && safeEqual(key, CLIENT_KEY)) || (ADMIN_KEY && safeEqual(key, ADMIN_KEY))) return next();
+    return res.status(401).json({ success: false, message: 'Wrong access code.' });
 }
 
 // Live-sync screens must log in with the scanner PIN (or admin key) to receive guest names
@@ -1009,6 +1017,45 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
     } catch (e) {
         console.error('[STATS ERROR RAW]', e);
         res.status(500).json({ success: false, error: 'Could not fetch stats' });
+    }
+});
+
+// ─── ORGANISERS' REGISTRY (READ-ONLY) ───
+// Valid tickets only, and no phone numbers, emails or payment references.
+app.get('/api/client-registry', requireClient, async (req, res) => {
+    try {
+        const eventId = req.query.eventId;
+        if (!findEvent(eventId)) return res.status(400).json({ success: false, message: 'Unknown event.' });
+        const { data, error } = await supabase.from('orders')
+            .select('id, payerName, clubName, position, packageTier, paymentMethod, quantity, amount, dietaryPreference, attended, checkInTime, createdAt, updatedAt')
+            .eq('eventId', eventId).eq('status', 'PAID')
+            .order('createdAt', { ascending: false });
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            guests: data.map(g => {
+                const kind = g.paymentMethod === 'INVITE' || g.packageTier === 'INVITED' ? 'invited'
+                    : g.packageTier === 'COMPLIMENTARY' ? 'complimentary' : 'paid';
+                return {
+                    ref: String(g.id).slice(0, 8).toUpperCase(),
+                    name: g.payerName || 'Guest',
+                    club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
+                    position: g.position || '',
+                    kind,
+                    qty: Number(g.quantity) || 1,
+                    amount: kind === 'paid' ? Number(g.amount) || 0 : 0,
+                    diet: g.dietaryPreference || 'None',
+                    attended: !!g.attended,
+                    checkInTime: g.checkInTime,
+                    time: g.createdAt || g.updatedAt
+                };
+            }),
+            lastUpdated: new Date().toISOString()
+        });
+    } catch (e) {
+        console.error('[CLIENT REGISTRY ERROR]', e.message);
+        res.status(500).json({ success: false, message: 'Could not load the registry.' });
     }
 });
 
