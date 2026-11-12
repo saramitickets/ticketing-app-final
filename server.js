@@ -89,7 +89,7 @@ const EVENT_CONFIGS = {
     }
 };
 
-const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', LIONS: 'Lions', LEOS: 'Leos' };
+const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lions', LEOS: 'Leos' };
 const tierLabel = (t) => TIER_LABELS[t] || t || 'General';
 
 // Guest positions shown on the booking and invite forms (keep in sync with the pages)
@@ -735,6 +735,7 @@ app.post('/api/manual-order', requireAdmin, async (req, res) => {
             eventId: findEvent(b.eventId) ? b.eventId : 'MASS_INDUCTION_2026',
             status: 'PAID',
             paymentMethod: 'MANUAL_ENTRY',
+            mpesaReceipt: clean(b.mpesaReceipt, 20).toUpperCase() || 'N/A',
             emailStatus: 'PENDING',
             attended: false,
             createdAt: new Date().toISOString(),
