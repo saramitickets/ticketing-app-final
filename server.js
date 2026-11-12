@@ -145,6 +145,13 @@ function requireScanner(req, res, next) {
     return res.status(401).json({ success: false, message: 'Wrong scanner PIN.' });
 }
 
+// Live-sync screens must log in with the scanner PIN (or admin key) to receive guest names
+io.use((socket, next) => {
+    const pin = socket.handshake.auth?.pin;
+    if ((SCANNER_PIN && safeEqual(pin, SCANNER_PIN)) || (ADMIN_KEY && safeEqual(pin, ADMIN_KEY))) return next();
+    next(new Error('UNAUTHORIZED'));
+});
+
 // QR holds only the ticket ID (short = scans fast, no personal data inside)
 function qrUrl(orderId, config, size = 300) {
     const payload = JSON.stringify({ ticketID: orderId });
@@ -642,9 +649,9 @@ app.post('/api/payment-callback', (req, res) => {
 app.post('/api/check-in', requireScanner, async (req, res) => {
     const ticketId = extractTicketId(req.body?.ticketId);
     const eventId = req.body?.eventId;
-    const fail = (message, extra = {}) => {
-        io.emit('scan_error', { message });
-        return res.json({ success: false, message, ...extra });
+    const fail = (message, extra = {}, kind = 'denied') => {
+        io.emit('scan_error', { message, kind, eventId: eventId || null, name: extra.name || null });
+        return res.json({ success: false, message, kind, ...extra });
     };
 
     if (!ticketId || !isUuid(ticketId)) return fail('Not a Sarami ticket. Ask the guest for their entry pass.');
@@ -659,7 +666,7 @@ app.post('/api/check-in', requireScanner, async (req, res) => {
         if (orderDoc.status !== 'PAID') return fail(`Ticket not paid (status: ${orderDoc.status}).`, { name: orderDoc.payerName });
 
         if (orderDoc.attended) {
-            return fail('Ticket already used.', { name: orderDoc.payerName, checkInTime: orderDoc.checkInTime, qty: orderDoc.quantity });
+            return fail('Ticket already used.', { name: orderDoc.payerName, checkInTime: orderDoc.checkInTime, qty: orderDoc.quantity }, 'used');
         }
 
         // Only flips attended if it was still false, so two phones scanning the same code can't both admit it
@@ -668,7 +675,7 @@ app.post('/api/check-in', requireScanner, async (req, res) => {
             .eq('id', ticketId).eq('attended', false)
             .select();
         if (updErr) throw updErr;
-        if (!updated || !updated.length) return fail('Ticket already used.', { name: orderDoc.payerName });
+        if (!updated || !updated.length) return fail('Ticket already used.', { name: orderDoc.payerName }, 'used');
 
         const info = {
             name: orderDoc.payerName,
@@ -678,17 +685,48 @@ app.post('/api/check-in', requireScanner, async (req, res) => {
             diet: orderDoc.dietaryPreference,
             invited: orderDoc.paymentMethod === 'INVITE'
         };
-        io.emit('vip_checked_in', info);
+        io.emit('vip_checked_in', { ...info, eventId: orderDoc.eventId });
         res.json({ success: true, ...info });
     } catch (e) {
         console.error("[SCANNER ERROR]", e);
-        io.emit('scan_error', { message: 'System error. Try again.' });
+        io.emit('scan_error', { message: 'System error. Try again.', kind: 'error', eventId: eventId || null });
         res.status(500).json({ success: false, message: "System error. Try again." });
     }
 });
 
 // Lets the scanner page confirm the PIN before opening the camera
 app.post('/api/scanner-login', requireScanner, (req, res) => res.json({ success: true }));
+
+// ─── DOOR GUEST LIST (PIN REQUIRED) ───
+// Only what door staff need to find a guest: no emails, phone shown as last 4 digits.
+app.get('/api/guest-list', requireScanner, async (req, res) => {
+    try {
+        const config = findEvent(req.query.eventId);
+        if (!config) return res.status(400).json({ success: false, message: 'Unknown event.' });
+        const { data, error } = await supabase.from('orders')
+            .select('id, payerName, payerPhone, clubName, quantity, packageTier, paymentMethod, attended, checkInTime')
+            .eq('eventId', req.query.eventId).eq('status', 'PAID')
+            .order('payerName', { ascending: true });
+        if (error) throw error;
+        res.json({
+            success: true,
+            guests: data.map(g => ({
+                id: g.id,
+                name: g.payerName || 'Guest',
+                phoneLast4: String(g.payerPhone || '').slice(-4),
+                club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
+                qty: Number(g.quantity) || 1,
+                tier: tierLabel(g.packageTier),
+                invited: g.paymentMethod === 'INVITE',
+                attended: !!g.attended,
+                checkInTime: g.checkInTime
+            }))
+        });
+    } catch (e) {
+        console.error('[GUEST LIST ERROR]', e.message);
+        res.status(500).json({ success: false, message: 'Could not load guest list.' });
+    }
+});
 
 // ─── MANUAL ATTENDANCE TOGGLE (ADMIN) ───
 app.post('/api/toggle-attendance/:id', requireAdmin, async (req, res) => {
