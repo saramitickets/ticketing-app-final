@@ -37,13 +37,25 @@ const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } 
 const EVENT_CONFIGS = {
     'MASS_INDUCTION_2026': {
         title: "MASS INDUCTION DINNER 2026",
-        emailSubject: "🎫 Your Entry Pass: Mass Induction Dinner",
+        emailSubject: "Your entry pass: Mass Induction Dinner, 27 Nov",
         venue: "Lions Service Centre, Loresho • 27th November 2026 at 6:30 PM",
         primaryColor: "#00338D",
         accentColor: "#F2A900",
         bgGradient: "linear-gradient(135deg, #001f5b, #00338D)",
         buttonGradient: "linear-gradient(135deg, #F2A900, #d97706)",
         ticketHeader: "SARAMI EVENTS",
+        details: {
+            name: 'Mass Induction Dinner',
+            year: '2026',
+            date: 'Friday, 27th November 2026',
+            shortDate: 'Fri, 27 Nov 2026',
+            time: '6:30 PM',
+            venue: 'Lions Service Centre',
+            area: 'Loresho, Nairobi',
+            mapsQuery: 'Lions Service Centre, Loresho, Nairobi',
+            calStart: '20261127T153000Z',   // 6:30 PM Nairobi time
+            calEnd: '20261127T193000Z'      // 10:30 PM Nairobi time (adjust if the dinner ends at a different time)
+        },
         tiers: { GENERAL: 1800 },
         maxQty: 10,
         invite: {
@@ -189,84 +201,183 @@ async function setOrder(id, fields) {
     if (error) console.error('[DB UPDATE ERROR]', id, error.message);
 }
 
-// ─── LUXURY E-TICKET EMAIL ───
+// ─── TICKET DESIGN HELPERS ───
+function eventDetails(config) {
+    if (config.details) return config.details;
+    const [place, when] = config.venue.split('•').map(s => (s || '').trim());
+    return { name: config.title, year: '', date: when || 'TBA', time: '', venue: place, area: '', mapsQuery: place };
+}
+
+function mapsUrl(d) {
+    return d.mapsQuery ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(d.mapsQuery)}` : '';
+}
+
+function calendarUrl(d) {
+    if (!d.calStart || !d.calEnd) return '';
+    const p = new URLSearchParams({
+        action: 'TEMPLATE',
+        text: `${d.name}${d.year ? ' ' + d.year : ''}`,
+        dates: `${d.calStart}/${d.calEnd}`,
+        location: [d.venue, d.area].filter(Boolean).join(', '),
+        details: 'Show your QR entry pass at the entrance.'
+    });
+    return `https://calendar.google.com/calendar/render?${p.toString()}`;
+}
+
+function ticketBadge(order) {
+    if (order.paymentMethod === 'INVITE') return 'Invited Guest';
+    const t = tierLabel(order.packageTier);
+    return t === 'General' ? 'General Admission' : t;
+}
+
+// ─── E-TICKET EMAIL ───
+function buildTicketEmail(order, orderId, config) {
+    const d = eventDetails(config);
+    const isInvite = order.paymentMethod === 'INVITE';
+    const name = esc(order.payerName);
+    const qty = Number(order.quantity) || 1;
+    const passUrl = `${PUBLIC_BASE_URL}/api/ticket/${orderId}`;
+    const cal = calendarUrl(d);
+    const map = mapsUrl(d);
+    const subline = [order.position, order.clubName && order.clubName !== 'N/A' ? order.clubName : ''].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+    const diet = order.dietaryPreference && order.dietaryPreference !== 'None' ? esc(order.dietaryPreference) : '';
+    const PAGE = '#E9ECF2', NAVY = '#00205B', GOLD = '#F2A900', CREAM = '#FBF7EE', INK = '#1C2541', MUTED = '#6B7280';
+    const sans = "Arial, Helvetica, sans-serif";
+    const serif = "Georgia, 'Times New Roman', serif";
+    const label = (t) => `<p style="margin:0 0 6px;font:bold 10px/1 ${sans};letter-spacing:2.5px;color:#9A8B5F;text-transform:uppercase;">${t}</p>`;
+
+    const detailCell = (title, value, extra = '') => `
+        <td class="stack" width="33%" valign="top" style="padding:10px 8px;text-align:center;">
+            ${label(title)}
+            <p style="margin:0;font:bold 15px/1.35 ${sans};color:${INK};">${value}</p>
+            ${extra}
+        </td>`;
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light">
+<title>${esc(d.name)} entry pass</title>
+<style>
+  @media (max-width: 620px) {
+    .px { padding-left: 22px !important; padding-right: 22px !important; }
+    .h1 { font-size: 34px !important; }
+    .stack { display: block !important; width: 100% !important; }
+    .qr { width: 200px !important; height: 200px !important; }
+  }
+  a { text-decoration: none; }
+</style>
+</head>
+<body style="margin:0;padding:0;background:${PAGE};-webkit-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:${PAGE};">
+    ${isInvite ? 'Your RSVP is confirmed.' : 'Payment received.'} Your QR entry pass for ${esc(d.name)} on ${esc(d.date)} is inside.
+</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAGE}" style="background:${PAGE};">
+<tr><td align="center" style="padding:32px 12px 40px;">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+
+    <!-- Brand -->
+    <tr><td align="center" style="padding:0 0 18px;font:bold 11px/1 ${sans};letter-spacing:5px;color:${NAVY};">SARAMI EVENTS</td></tr>
+
+    <!-- Ticket head -->
+    <tr><td class="px" bgcolor="${NAVY}" style="background:${NAVY};background-image:linear-gradient(160deg,#0A3A94 0%,${NAVY} 55%,#001233 100%);border-radius:20px 20px 0 0;padding:46px 44px 40px;text-align:center;">
+        <p style="margin:0 0 16px;font:italic 16px/1.4 ${serif};color:#E8C766;">${isInvite ? 'You are cordially invited to the' : 'Your seat is reserved for the'}</p>
+        <h1 class="h1" style="margin:0;font:normal 42px/1.12 ${serif};color:#FFFFFF;letter-spacing:1px;">${esc(d.name)}</h1>
+        ${d.year ? `<p style="margin:14px 0 0;font:bold 13px/1 ${sans};letter-spacing:8px;color:${GOLD};">${esc(d.year)}</p>` : ''}
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:26px auto 0;"><tr>
+            <td width="60" valign="middle"><div style="height:1px;line-height:1px;font-size:1px;background:#B8932E;">&nbsp;</div></td>
+            <td style="padding:0 10px;font:12px/1 ${serif};color:${GOLD};">&#9670;</td>
+            <td width="60" valign="middle"><div style="height:1px;line-height:1px;font-size:1px;background:#B8932E;">&nbsp;</div></td>
+        </tr></table>
+        <p style="margin:24px 0 0;font:16px/1.65 ${sans};color:#C9D6F2;">
+            Dear <strong style="color:#FFFFFF;">${name}</strong>,<br>
+            ${isInvite ? 'thank you for accepting our invitation. Your place is confirmed.' : 'thank you, your payment has been received.'}
+        </p>
+    </td></tr>
+
+    <!-- Event details -->
+    <tr><td bgcolor="${CREAM}" style="background:${CREAM};padding:26px 22px 14px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            ${detailCell('Date', esc(d.shortDate || d.date))}
+            ${detailCell('Time', esc(d.time || 'TBA'))}
+            ${detailCell('Venue', `${esc(d.venue)}${d.area ? `<br><span style="font-weight:normal;color:${MUTED};font-size:13px;">${esc(d.area)}</span>` : ''}`,
+                map ? `<p style="margin:8px 0 0;"><a href="${map}" style="font:bold 12px ${sans};color:${NAVY};text-decoration:underline;">Get directions</a></p>` : '')}
+        </tr></table>
+    </td></tr>
+
+    <!-- Perforation -->
+    <tr><td bgcolor="${CREAM}" style="background:${CREAM};">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td width="16" height="32" style="background:${PAGE};border-radius:0 16px 16px 0;font-size:0;">&nbsp;</td>
+            <td style="padding:0 10px;"><div style="border-top:2px dashed #D8CCAA;height:0;line-height:0;font-size:0;">&nbsp;</div></td>
+            <td width="16" height="32" style="background:${PAGE};border-radius:16px 0 0 16px;font-size:0;">&nbsp;</td>
+        </tr></table>
+    </td></tr>
+
+    <!-- Stub -->
+    <tr><td class="px" bgcolor="${CREAM}" style="background:${CREAM};border-radius:0 0 20px 20px;padding:20px 44px 42px;text-align:center;">
+        <span style="display:inline-block;background:${NAVY};color:${GOLD};font:bold 11px/1 ${sans};letter-spacing:3px;text-transform:uppercase;padding:9px 18px;border-radius:999px;">${esc(ticketBadge(order))}</span>
+        <p style="margin:18px 0 0;font:normal 28px/1.25 ${serif};color:${NAVY};">${name}</p>
+        ${subline ? `<p style="margin:8px 0 0;font:14px/1.5 ${sans};color:${MUTED};">${subline}</p>` : ''}
+
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:26px auto 0;"><tr>
+            <td bgcolor="#FFFFFF" style="background:#FFFFFF;border:1px solid #E6DCC0;border-radius:18px;padding:14px;">
+                <img class="qr" src="${qrUrl(orderId, config, 440)}" width="220" height="220" alt="Entry QR code for ${name}" style="display:block;width:220px;height:220px;border:0;">
+            </td>
+        </tr></table>
+        <p style="margin:12px 0 0;font:13px/1.4 ${sans};color:${MUTED};">Show this code at the entrance</p>
+
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:26px auto 0;border-collapse:separate;"><tr>
+            <td style="padding:12px 24px;border:1px solid #E6DCC0;border-radius:14px 0 0 14px;text-align:center;">
+                ${label('Admit')}
+                <p style="margin:0;font:bold 22px/1 ${serif};color:${NAVY};">${qty} ${qty === 1 ? 'Guest' : 'Guests'}</p>
+            </td>
+            <td style="padding:12px 24px;border:1px solid #E6DCC0;border-left:0;border-radius:0 14px 14px 0;text-align:center;">
+                ${label('Ticket No.')}
+                <p style="margin:0;font:bold 18px/1.2 'Courier New', monospace;color:${NAVY};letter-spacing:1px;">${esc(orderId.slice(0, 8).toUpperCase())}</p>
+            </td>
+        </tr></table>
+
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:30px auto 0;"><tr>
+            <td bgcolor="${GOLD}" style="background:${GOLD};border-radius:999px;">
+                <a href="${passUrl}" style="display:inline-block;padding:16px 34px;font:bold 15px/1 ${sans};color:${NAVY};text-decoration:none;border-radius:999px;">Open my entry pass</a>
+            </td>
+        </tr></table>
+        ${cal ? `<p style="margin:16px 0 0;"><a href="${cal}" style="font:bold 13px ${sans};color:${NAVY};text-decoration:underline;">Add to my calendar</a></p>` : ''}
+    </td></tr>
+
+    <!-- Notes -->
+    <tr><td style="padding:28px 34px 6px;text-align:center;font:13px/1.75 ${sans};color:#5B6478;">
+        Show the QR code on your phone or on paper. Each code can only be scanned once, so please don't forward this email.
+        ${diet ? `<br>Dietary preference noted: <strong style="color:${INK};">${diet}</strong>.` : ''}
+        <br>Questions? Call or WhatsApp <a href="tel:+254104410892" style="color:${NAVY};font-weight:bold;">+254 104 410 892</a>.
+    </td></tr>
+
+    <!-- Footer -->
+    <tr><td style="padding:22px 20px 0;text-align:center;font:11px/1.6 ${sans};color:#8A93A6;letter-spacing:1px;">
+        &copy; ${new Date().getFullYear()} SARAMI EVENTS &nbsp;|&nbsp; A property of Sarami Group<br>
+        2nd Ngong Avenue, Bishop Gardens Tower, Upperhill, Nairobi
+    </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
 async function sendConfirmationEmail(orderData, orderId) {
     try {
         console.log(`[EMAIL] Generating Ticket for ${orderData.payerEmail}`);
         const config = getEventConfig(orderData.eventId);
-        const downloadLink = `${PUBLIC_BASE_URL}/api/ticket/${orderId}`;
-        const name = esc(orderData.payerName);
-        const tier = esc(tierLabel(orderData.packageTier));
-        const dateText = esc(config.venue.split('•')[1] ? config.venue.split('•')[1].trim() : 'TBA');
-        const venueText = esc(config.venue.split('•')[0].trim());
-        const isInvite = orderData.paymentMethod === 'INVITE';
-
-        const plate = (text, size = 17) => `
-            <div style="background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%); padding: 2px; border-radius: 6px; display: inline-block;">
-                <div style="background: linear-gradient(135deg, #fdfbf7, #fffcf5); padding: 12px 20px; border-radius: 4px;">
-                    <span style="font-size: ${size}px; color: #00205B; font-family: 'Georgia', serif; font-weight: bold;">${text}</span>
-                </div>
-            </div>`;
-        const label = (t) => `<p style="margin: 0 0 8px 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;">${t}</p>`;
 
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
         sendSmtpEmail.subject = config.emailSubject;
-        sendSmtpEmail.htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; padding: 40px 20px;">
-                <tr><td align="center">
-                    <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 4px; overflow: hidden; max-width: 600px; width: 100%; border: 1px solid #e2e8f0;">
-                        <tr>
-                            <td style="background: ${config.bgGradient}; background-color: ${config.primaryColor}; padding: 45px 20px; text-align: center; border-bottom: 4px solid ${config.accentColor};">
-                                <h1 style="color: #ffffff; margin: 0; font-family: 'Georgia', serif; font-size: 28px; letter-spacing: 6px; text-transform: uppercase; font-weight: normal;">${config.ticketHeader}</h1>
-                                <p style="color: ${config.accentColor}; margin: 15px 0 0 0; font-size: 11px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase;">${config.title}</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td align="center" style="padding: 50px 40px 30px 40px;">
-                                <h2 style="color: ${config.primaryColor}; margin-top: 0; font-family: 'Georgia', serif; font-size: 24px; font-weight: normal;">${isInvite ? 'Your RSVP is Confirmed' : 'Your Seat is Secured'}</h2>
-                                <div style="width: 50px; height: 2px; background: #B38728; margin: 20px auto;"></div>
-                                <p style="color: #475569; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">Welcome, <strong>${name}</strong>. ${isInvite ? 'Thank you for accepting our invitation.' : 'Your payment has been received.'} Show the QR code below at the entrance on the night.</p>
-                                <a href="${downloadLink}" style="display: inline-block; background: #B38728; background: linear-gradient(135deg, #BF953F, #B38728); color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 18px 40px; border-radius: 4px; text-transform: uppercase; letter-spacing: 2px; border: 1px solid #AA771C;">View Entry Pass</a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px 40px 40px 40px;">
-                                <div style="border: 1px solid #e2e8f0; padding: 35px; text-align: center; background-color: #fafaf9;">
-                                    <img src="${qrUrl(orderId, config, 250)}" width="180" height="180" alt="Your entry QR code" style="display: block; margin: 0 auto; border: 4px solid #ffffff;">
-                                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 35px; text-align: left; border-top: 1px solid #e2e8f0; padding-top: 35px;">
-                                        <tr>
-                                            <td style="padding-bottom: 25px; width: 50%;">${label('Name of Guest')}${plate(name)}</td>
-                                            <td align="right" style="padding-bottom: 25px; width: 50%;">${label('Admit')}${plate(`${Number(orderData.quantity) || 1} Person(s)`)}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding-bottom: 25px;">${label('Ticket')}${plate(tier, 16)}</td>
-                                            <td align="right" style="padding-bottom: 25px;">${label('Date')}
-                                                <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 12px 20px; border-radius: 6px; display: inline-block;">
-                                                    <span style="font-size: 14px; color: #334155; font-family: 'Georgia', serif; font-weight: bold;">${dateText}</span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                        ${orderData.position ? `<tr><td colspan="2" style="padding-bottom: 25px;">${label('Position')}${plate(esc(orderData.position), 15)}</td></tr>` : ''}
-                                        <tr><td colspan="2">${label('Venue')}<span style="font-size: 14px; color: #334155;">${venueText}</span></td></tr>
-                                    </table>
-                                </div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="background-color: #0f172a; padding: 30px 20px; text-align: center;">
-                                <p style="color: #94a3b8; font-size: 11px; margin: 0; letter-spacing: 1px; text-transform: uppercase;">&copy; ${new Date().getFullYear()} Sarami Events. All rights reserved.</p>
-                                <p style="color: #64748b; font-size: 10px; margin: 10px 0 0 0;">Each QR code can be scanned once. Please don't share it.</p>
-                            </td>
-                        </tr>
-                    </table>
-                </td></tr>
-            </table>
-        </body>
-        </html>`;
-
+        sendSmtpEmail.htmlContent = buildTicketEmail(orderData, orderId, config);
         sendSmtpEmail.sender = { name: "Sarami Events", email: "etickets@saramievents.co.ke" };
         sendSmtpEmail.replyTo = { email: "etickets@saramievents.co.ke", name: "Sarami Events Support" };
         sendSmtpEmail.to = [{ email: orderData.payerEmail, name: orderData.payerName }];
@@ -282,79 +393,154 @@ async function sendConfirmationEmail(orderData, orderId) {
     }
 }
 
-// ─── WEB TICKET PAGE ───
+// ─── WEB ENTRY PASS ───
+function buildTicketPage(order, orderId, config) {
+    const d = eventDetails(config);
+    const isInvite = order.paymentMethod === 'INVITE';
+    const name = esc(order.payerName);
+    const qty = Number(order.quantity) || 1;
+    const cal = calendarUrl(d);
+    const map = mapsUrl(d);
+    const subline = [order.position, order.clubName && order.clubName !== 'N/A' ? order.clubName : ''].filter(Boolean).map(esc).join(' · ');
+    const diet = order.dietaryPreference && order.dietaryPreference !== 'None' ? esc(order.dietaryPreference) : '';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#00205B">
+<title>Entry pass · ${name}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root { --navy:#00205B; --navy2:#0A3A94; --deep:#001233; --gold:#F2A900; --gold-soft:#E8C766; --cream:#FBF7EE; --line:#E6DCC0; --ink:#1C2541; --muted:#6B7280; --page:#E9ECF2; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+        min-height: 100vh; padding: max(28px, env(safe-area-inset-top)) 16px max(40px, env(safe-area-inset-bottom));
+        font-family: 'Inter', Arial, sans-serif; color: var(--ink);
+        background: radial-gradient(ellipse at top, #F7F1E1 0%, var(--page) 55%);
+        display: flex; flex-direction: column; align-items: center;
+    }
+    .brand { font: 700 11px/1 'Inter', Arial, sans-serif; letter-spacing: 5px; color: var(--navy); margin: 0 0 18px; }
+    .ticket { width: 100%; max-width: 440px; filter: drop-shadow(0 24px 40px rgba(0,32,91,.18)); }
+
+    .head {
+        position: relative; overflow: hidden; text-align: center; color: #fff;
+        background: linear-gradient(160deg, var(--navy2) 0%, var(--navy) 55%, var(--deep) 100%);
+        border-radius: 22px 22px 0 0; padding: 40px 28px 34px;
+    }
+    .head::before {
+        content: ""; position: absolute; inset: 12px; border: 1px solid rgba(242,169,0,.35); border-radius: 14px; pointer-events: none;
+    }
+    .kicker { font: italic 500 15px/1.4 Georgia, serif; color: var(--gold-soft); margin: 0 0 14px; }
+    h1 { font: 700 clamp(30px, 8vw, 38px)/1.08 'Cinzel', Georgia, serif; margin: 0; letter-spacing: .5px; }
+    .year { font: 700 12px/1 'Inter', sans-serif; letter-spacing: 8px; color: var(--gold); margin: 14px 0 0; }
+    .rule { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 22px 0 0; color: var(--gold); font-size: 10px; }
+    .rule::before, .rule::after { content: ""; width: 56px; height: 1px; background: var(--gold); opacity: .7; }
+
+    .body { background: var(--cream); }
+    .details { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 12px; padding: 26px 26px 6px; }
+    .details .venue { grid-column: 1 / -1; }
+    .lbl { font: 700 10px/1 'Inter', sans-serif; letter-spacing: 2.5px; text-transform: uppercase; color: #9A8B5F; margin: 0 0 7px; }
+    .val { font: 600 15px/1.35 'Inter', sans-serif; margin: 0; }
+    .val small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+    .perf { position: relative; height: 34px; background: var(--cream); }
+    .perf::before, .perf::after { content: ""; position: absolute; top: 0; width: 34px; height: 34px; border-radius: 50%; background: var(--page); }
+    .perf::before { left: -17px; } .perf::after { right: -17px; }
+    .perf span { position: absolute; left: 24px; right: 24px; top: 16px; border-top: 2px dashed #D8CCAA; }
+
+    .stub { background: var(--cream); border-radius: 0 0 22px 22px; padding: 10px 26px 32px; text-align: center; }
+    .badge { display: inline-block; background: var(--navy); color: var(--gold); font: 700 11px/1 'Inter', sans-serif; letter-spacing: 3px; text-transform: uppercase; padding: 9px 18px; border-radius: 999px; }
+    .name { font: 500 26px/1.2 'Cinzel', Georgia, serif; color: var(--navy); margin: 16px 0 0; overflow-wrap: anywhere; }
+    .sub { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+
+    .qr { display: inline-block; margin: 24px 0 0; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 20px; position: relative; }
+    .qr img { display: block; width: min(240px, 62vw); height: auto; aspect-ratio: 1; }
+    .qr::before, .qr::after { content: ""; position: absolute; width: 26px; height: 26px; border-color: var(--gold); border-style: solid; }
+    .qr::before { top: -6px; left: -6px; border-width: 3px 0 0 3px; border-radius: 10px 0 0 0; }
+    .qr::after { bottom: -6px; right: -6px; border-width: 0 3px 3px 0; border-radius: 0 0 10px 0; }
+    .hint { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+
+    .facts { display: grid; grid-template-columns: 1fr 1fr; margin: 24px 0 0; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+    .facts div { padding: 14px 10px; }
+    .facts div + div { border-left: 1px solid var(--line); }
+    .facts .big { font: 700 22px/1 'Cinzel', Georgia, serif; color: var(--navy); margin: 0; }
+    .facts .mono { font: 700 17px/1.2 'Courier New', monospace; color: var(--navy); letter-spacing: 1px; margin: 0; }
+    .diet { margin: 18px 0 0; font-size: 13px; color: var(--muted); }
+    .diet strong { color: var(--ink); }
+
+    .actions { width: 100%; max-width: 440px; display: grid; gap: 10px; margin: 26px 0 0; }
+    .btn { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 15px 18px; border-radius: 999px; font: 700 15px/1 'Inter', sans-serif; text-decoration: none; cursor: pointer; border: 0; }
+    .btn-gold { background: var(--gold); color: var(--navy); }
+    .btn-line { background: #fff; color: var(--navy); border: 1px solid #CBD3E3; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn:focus-visible { outline: 3px solid var(--navy); outline-offset: 3px; }
+    .note { max-width: 440px; text-align: center; font-size: 12.5px; line-height: 1.7; color: #5B6478; margin: 22px 0 0; }
+
+    @media print {
+        body { background: #fff; padding: 0; }
+        .ticket { filter: none; }
+        .actions, .note { display: none; }
+        .perf::before, .perf::after { background: #fff; }
+    }
+</style>
+</head>
+<body>
+    <p class="brand">SARAMI EVENTS</p>
+
+    <main class="ticket" aria-label="Entry pass">
+        <section class="head">
+            <p class="kicker">${isInvite ? 'You are cordially invited to the' : 'Your seat is reserved for the'}</p>
+            <h1>${esc(d.name)}</h1>
+            ${d.year ? `<p class="year">${esc(d.year)}</p>` : ''}
+            <div class="rule" aria-hidden="true">&#9670;</div>
+        </section>
+
+        <section class="body details">
+            <div><p class="lbl">Date</p><p class="val">${esc(d.shortDate || d.date)}</p></div>
+            <div><p class="lbl">Time</p><p class="val">${esc(d.time || 'TBA')}</p></div>
+            <div class="venue"><p class="lbl">Venue</p><p class="val">${esc(d.venue)}${d.area ? `<small>${esc(d.area)}</small>` : ''}</p></div>
+        </section>
+
+        <div class="perf" aria-hidden="true"><span></span></div>
+
+        <section class="stub">
+            <span class="badge">${esc(ticketBadge(order))}</span>
+            <p class="name">${name}</p>
+            ${subline ? `<p class="sub">${subline}</p>` : ''}
+            <div class="qr"><img src="${qrUrl(orderId, config, 480)}" alt="Entry QR code"></div>
+            <p class="hint">Show this code at the entrance</p>
+            <div class="facts">
+                <div><p class="lbl">Admit</p><p class="big">${qty} ${qty === 1 ? 'Guest' : 'Guests'}</p></div>
+                <div><p class="lbl">Ticket No.</p><p class="mono">${esc(orderId.slice(0, 8).toUpperCase())}</p></div>
+            </div>
+            ${diet ? `<p class="diet">Dietary preference: <strong>${diet}</strong></p>` : ''}
+        </section>
+    </main>
+
+    <div class="actions">
+        <button class="btn btn-gold" onclick="window.print()">Save or print pass</button>
+        ${cal || map ? `<div class="row">
+            ${cal ? `<a class="btn btn-line" href="${cal}" target="_blank" rel="noopener">Add to calendar</a>` : ''}
+            ${map ? `<a class="btn btn-line" href="${map}" target="_blank" rel="noopener">Directions</a>` : ''}
+        </div>` : ''}
+    </div>
+    <p class="note">Tip: take a screenshot so you have it even without internet. Each code can only be scanned once, so please don't share it.<br>Need help? +254 104 410 892</p>
+</body>
+</html>`;
+}
+
 app.get('/api/ticket/:orderId', async (req, res) => {
     try {
         if (!isUuid(req.params.orderId)) return res.status(404).send('<h1>Ticket Not Found</h1>');
         const { data: orderData, error } = await supabase.from('orders').select('*').eq('id', req.params.orderId).single();
         if (error || !orderData) return res.status(404).send('<h1>Ticket Not Found</h1>');
         if (orderData.status !== 'PAID') return res.status(403).send('<h1>Payment for this ticket is pending or failed.</h1>');
-
-        const config = getEventConfig(orderData.eventId);
-        const name = esc(orderData.payerName);
-        const venueParts = config.venue.split('•');
-
-        res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Entry Pass - ${name}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Playfair+Display:ital,wght@0,400;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Montserrat', sans-serif; background-color: #f8fafc; }
-        .serif-font { font-family: 'Playfair Display', serif; }
-        .cinzel-font { font-family: 'Cinzel', serif; }
-        .gold-plate { position: relative; background: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%); padding: 2px; border-radius: 6px; overflow: hidden; display: inline-block; width: 100%; }
-        .gold-inner { background: linear-gradient(135deg, #fdfbf7 0%, #fffcf5 100%); border-radius: 4px; padding: 12px 16px; height: 100%; position: relative; z-index: 2; }
-        .gold-text { color: #00205B; }
-        @media print {
-            .print-btn { display: none !important; }
-            body { background-color: white; }
-            .ticket-container { box-shadow: none !important; }
-        }
-    </style>
-</head>
-<body class="flex flex-col items-center justify-center min-h-screen p-4 py-10">
-    <div class="mb-8 print-btn">
-        <button onclick="window.print()" class="text-white text-sm font-semibold uppercase tracking-widest px-8 py-4 rounded shadow-lg" style="background: linear-gradient(135deg, #BF953F, #B38728);">Save / Print Pass</button>
-    </div>
-    <div class="ticket-container bg-white w-full max-w-md shadow-2xl border border-gray-200 overflow-hidden">
-        <div class="p-10 text-center" style="background: ${config.bgGradient}; border-bottom: 4px solid ${config.accentColor};">
-            <h1 class="text-3xl text-white tracking-[0.2em] uppercase cinzel-font font-bold">${config.ticketHeader}</h1>
-            <p class="text-[10px] font-bold tracking-[0.3em] mt-3 uppercase" style="color: ${config.accentColor};">${config.title}</p>
-        </div>
-        <div class="p-10 text-center bg-[#fafaf9] border-b border-gray-200">
-            <p class="serif-font italic text-gray-500 mb-6 text-lg">Show this code at the entrance</p>
-            <div class="bg-white p-3 inline-block rounded-sm shadow-md border border-gray-100">
-                <img src="${qrUrl(req.params.orderId, config, 300)}" alt="Entry QR code" class="w-56 h-56 mx-auto">
-            </div>
-            <p class="mt-4 text-[10px] font-mono text-gray-400 tracking-widest uppercase">ID: ${esc(req.params.orderId.substring(0, 8))}</p>
-        </div>
-        <div class="p-10 bg-white">
-            <div class="grid grid-cols-2 gap-y-8 gap-x-4 text-left">
-                <div><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Name of Guest</p>
-                    <div class="gold-plate"><div class="gold-inner"><span class="cinzel-font text-base font-bold gold-text leading-tight">${name}</span></div></div></div>
-                <div><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 text-right mr-1">Ticket</p>
-                    <div class="gold-plate"><div class="gold-inner text-right"><span class="cinzel-font text-base font-bold gold-text">${esc(tierLabel(orderData.packageTier))}</span></div></div></div>
-                <div><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Admit</p>
-                    <div class="gold-plate"><div class="gold-inner"><span class="cinzel-font text-sm font-bold gold-text">${Number(orderData.quantity) || 1} Person(s)</span></div></div></div>
-                <div><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 text-right mr-1">Dietary</p>
-                    <div class="gold-plate"><div class="gold-inner text-right"><span class="cinzel-font text-sm font-bold gold-text">${esc(orderData.dietaryPreference || 'None')}</span></div></div></div>
-                ${orderData.position ? `<div class="col-span-2"><p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Position</p>
-                    <div class="gold-plate"><div class="gold-inner"><span class="cinzel-font text-sm font-bold gold-text">${esc(orderData.position)}</span></div></div></div>` : ''}
-                <div class="col-span-2 border-t border-gray-100 pt-6 mt-2">
-                    <p class="text-[9px] text-gray-400 uppercase tracking-widest font-semibold mb-2 ml-1">Venue & Time</p>
-                    <div class="bg-slate-50 border border-slate-200 text-gray-800 px-5 py-4 rounded-lg text-sm leading-relaxed">
-                        ${esc(venueParts[0].trim())}${venueParts[1] ? `<span class="text-gray-500 text-xs mt-1.5 block">${esc(venueParts[1].trim())}</span>` : ''}
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</body>
-</html>`);
+        res.send(buildTicketPage(orderData, req.params.orderId, getEventConfig(orderData.eventId)));
     } catch (e) {
         res.status(500).send('Error loading ticket.');
     }
