@@ -54,9 +54,12 @@ const EVENT_CONFIGS = {
             venue: 'Lions Service Centre',
             area: 'Loresho, Nairobi',
             mapsQuery: 'Lions Service Centre, Loresho, Nairobi',
+            kicker: 'Sarami Events presents',
+            start: '2026-11-27T18:30:00+03:00',
             calStart: '20261127T153000Z',   // 6:30 PM Nairobi time
             calEnd: '20261127T193000Z'      // 10:30 PM Nairobi time (adjust if the dinner ends at a different time)
         },
+        clientKeyEnv: 'CLIENT_KEY',          // organisers' read-only code (Lions District 411A)
         tiers: { GENERAL: 1800 },
         maxQty: 10,
         invite: {
@@ -82,10 +85,13 @@ const EVENT_CONFIGS = {
             venue: 'Moody Awori Primary',
             area: 'Presented by 5th Wheel Conservatoire',
             mapsQuery: 'Moody Awori Primary School',
+            kicker: '5th Wheel Conservatoire presents',
+            start: '2026-12-22T10:00:00+03:00',
             calStart: '20261222T070000Z',   // 10:00 AM Nairobi time
             calEnd: '20261222T180000Z'      // 9:00 PM Nairobi time ("till late"; adjust if needed)
         },
         // One booking can mix these. Prices are set here on the server only.
+        clientKeyEnv: 'SAMIA_CLIENT_KEY',    // organisers' read-only code (5th Wheel Conservatoire)
         tiers: { CHILDREN: 200, REGULAR: 500, VIP: 1000 },
         maxQty: 20
     },
@@ -1194,28 +1200,53 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
 });
 
 // ─── ORGANISERS' REGISTRY (READ-ONLY) ───
+// Each event has its own organiser code, and the code decides which event opens,
+// so one organiser can never see another's guests. The admin key can open any event (?eventId=).
 // Valid tickets only, and no phone numbers, emails or payment references.
-app.get('/api/client-registry', requireClient, async (req, res) => {
+function eventForClientCode(code, requestedEventId) {
+    if (ADMIN_KEY && safeEqual(code, ADMIN_KEY)) return findEvent(requestedEventId) ? requestedEventId : null;
+    return Object.keys(EVENT_CONFIGS).find(id => {
+        const env = EVENT_CONFIGS[id].clientKeyEnv;
+        return env && process.env[env] && safeEqual(code, process.env[env]);
+    }) || null;
+}
+
+function publicEventInfo(eventId) {
+    const c = EVENT_CONFIGS[eventId], d = eventDetails(c);
+    return {
+        id: eventId, name: d.name, year: d.year || '', kicker: d.kicker || 'Sarami Events presents',
+        date: d.date, time: d.time, venue: d.venue, area: d.area || '', start: d.start || null,
+        hasInvites: !!c.invite,
+        tiers: Object.keys(c.tiers || {}).map(t => ({ code: t, label: tierLabel(t), price: c.tiers[t] }))
+    };
+}
+
+app.get('/api/client-registry', async (req, res) => {
+    const eventId = eventForClientCode(req.get('x-client-key'), req.query.eventId);
+    if (!eventId) return res.status(401).json({ success: false, message: 'Wrong access code.' });
     try {
-        const eventId = req.query.eventId;
-        if (!findEvent(eventId)) return res.status(400).json({ success: false, message: 'Unknown event.' });
         const { data, error } = await supabase.from('orders')
-            .select('id, payerName, clubName, position, packageTier, paymentMethod, quantity, amount, dietaryPreference, attended, checkInTime, createdAt, updatedAt')
+            .select('id, payerName, clubName, position, packageTier, ticketItems, paymentMethod, quantity, amount, dietaryPreference, attended, checkInTime, createdAt, updatedAt')
             .eq('eventId', eventId).eq('status', 'PAID')
             .order('createdAt', { ascending: false });
         if (error) throw error;
 
         res.json({
             success: true,
+            event: publicEventInfo(eventId),
             guests: data.map(g => {
                 const kind = g.paymentMethod === 'INVITE' || g.packageTier === 'INVITED' ? 'invited'
                     : g.packageTier === 'COMPLIMENTARY' ? 'complimentary' : 'paid';
+                const items = Array.isArray(g.ticketItems) && g.ticketItems.length ? g.ticketItems.map(i => ({ tier: i.tier, qty: Number(i.qty) || 0 }))
+                    : (kind === 'paid' ? [{ tier: g.packageTier, qty: Number(g.quantity) || 1 }] : []);
                 return {
                     ref: String(g.id).slice(0, 8).toUpperCase(),
                     name: g.payerName || 'Guest',
                     club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
                     position: g.position || '',
                     kind,
+                    ticket: itemsSummary(g.ticketItems) || tierLabel(g.packageTier),
+                    items,
                     qty: Number(g.quantity) || 1,
                     amount: kind === 'paid' ? Number(g.amount) || 0 : 0,
                     diet: g.dietaryPreference || 'None',
