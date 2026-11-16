@@ -64,6 +64,31 @@ const EVENT_CONFIGS = {
             cap: Number(process.env.MASS_INDUCTION_INVITE_CAP) || 100   // max invited guests
         }
     },
+    'MR_MISS_SAMIA_2026': {
+        title: "MR & MISS SAMIA 2026",
+        emailSubject: "Your entry pass: Mr & Miss Samia, 22 Dec",
+        venue: "Moody Awori Primary • 22nd December 2026 at 10:00 AM",
+        primaryColor: "#00338D",
+        accentColor: "#F2A900",
+        bgGradient: "linear-gradient(135deg, #001f5b, #00338D)",
+        buttonGradient: "linear-gradient(135deg, #F2A900, #d97706)",
+        ticketHeader: "SARAMI EVENTS",
+        details: {
+            name: 'Mr & Miss Samia',
+            year: '2nd Edition',
+            date: 'Tuesday, 22nd December 2026',
+            shortDate: 'Tue, 22 Dec 2026',
+            time: '10:00 AM till late',
+            venue: 'Moody Awori Primary',
+            area: 'Presented by 5th Wheel Conservatoire',
+            mapsQuery: 'Moody Awori Primary School',
+            calStart: '20261222T070000Z',   // 10:00 AM Nairobi time
+            calEnd: '20261222T180000Z'      // 9:00 PM Nairobi time ("till late"; adjust if needed)
+        },
+        // One booking can mix these. Prices are set here on the server only.
+        tiers: { CHILDREN: 200, REGULAR: 500, VIP: 1000 },
+        maxQty: 20
+    },
     'DG_BANQUET_2026': {
         title: "DISTRICT GOVERNOR'S BANQUET 2026",
         emailSubject: "🎫 Your Entry Pass: District Governor's Banquet",
@@ -90,7 +115,13 @@ const EVENT_CONFIGS = {
     }
 };
 
-const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lions', LEOS: 'Leos' };
+const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lions', LEOS: 'Leos', CHILDREN: 'Children', REGULAR: 'Regular', VIP: 'VIP', MIXED: 'Mixed' };
+
+// "2 × VIP · 3 × Children" for bookings that mix ticket types
+function itemsSummary(items) {
+    if (!Array.isArray(items) || !items.length) return '';
+    return items.filter(i => i && i.qty > 0).map(i => `${i.qty} × ${tierLabel(i.tier)}`).join(' · ');
+}
 const tierLabel = (t) => TIER_LABELS[t] || t || 'General';
 
 // Guest positions shown on the booking and invite forms (keep in sync with the pages)
@@ -234,6 +265,8 @@ function calendarUrl(d) {
 
 function ticketBadge(order) {
     if (order.paymentMethod === 'INVITE') return 'Invited Guest';
+    const mix = itemsSummary(order.ticketItems);
+    if (mix) return mix;
     const t = tierLabel(order.packageTier);
     return t === 'General' ? 'General Admission' : t;
 }
@@ -566,13 +599,34 @@ app.post('/api/create-order', async (req, res) => {
     const config = findEvent(body.eventId);
     if (!config) return res.status(400).json({ success: false, error: 'Unknown event.' });
 
-    const tier = clean(body.packageTier || 'GENERAL', 20).toUpperCase();
-    const unitPrice = config.tiers?.[tier];
-    if (!unitPrice) return res.status(400).json({ success: false, error: 'This ticket type is not available.' });
+    const maxQty = config.maxQty || 10;
+    let tier, qty, amount, ticketItems = null;
 
-    const qty = parseInt(body.quantity, 10);
-    if (!Number.isInteger(qty) || qty < 1 || qty > (config.maxQty || 10)) {
-        return res.status(400).json({ success: false, error: `You can buy between 1 and ${config.maxQty || 10} tickets.` });
+    if (Array.isArray(body.items)) {
+        // Mixed booking, e.g. [{ tier: 'REGULAR', qty: 2 }, { tier: 'CHILDREN', qty: 3 }]
+        const merged = {};
+        for (const it of body.items.slice(0, 10)) {
+            const t = clean(it?.tier, 20).toUpperCase();
+            const q = parseInt(it?.qty, 10);
+            if (!Number.isInteger(q) || q < 0 || q > maxQty) return res.status(400).json({ success: false, error: 'Invalid ticket quantity.' });
+            if (q === 0) continue;
+            if (!config.tiers?.[t]) return res.status(400).json({ success: false, error: 'This ticket type is not available.' });
+            merged[t] = (merged[t] || 0) + q;
+        }
+        ticketItems = Object.keys(config.tiers).filter(t => merged[t]).map(t => ({ tier: t, qty: merged[t], unitPrice: config.tiers[t] }));
+        qty = ticketItems.reduce((n, i) => n + i.qty, 0);
+        if (qty < 1 || qty > maxQty) return res.status(400).json({ success: false, error: `You can book between 1 and ${maxQty} tickets at a time.` });
+        amount = ticketItems.reduce((n, i) => n + i.qty * i.unitPrice, 0);   // ← computed on the server only
+        tier = ticketItems.length === 1 ? ticketItems[0].tier : 'MIXED';
+    } else {
+        tier = clean(body.packageTier || 'GENERAL', 20).toUpperCase();
+        const unitPrice = config.tiers?.[tier];
+        if (!unitPrice) return res.status(400).json({ success: false, error: 'This ticket type is not available.' });
+        qty = parseInt(body.quantity, 10);
+        if (!Number.isInteger(qty) || qty < 1 || qty > maxQty) {
+            return res.status(400).json({ success: false, error: `You can buy between 1 and ${maxQty} tickets.` });
+        }
+        amount = unitPrice * qty;   // ← computed on the server, never trusted from the browser
     }
 
     const payerName = clean(body.payerName, 80);
@@ -580,13 +634,13 @@ app.post('/api/create-order', async (req, res) => {
     const payerPhone = formatPhone(body.payerPhone);
     if (!payerName || !isValidEmail(payerEmail)) return res.status(400).json({ success: false, error: 'Enter your full name and a valid email address.' });
     if (!isValidKePhone(payerPhone)) return res.status(400).json({ success: false, error: 'Enter a valid Safaricom number, e.g. 0712 345 678.' });
-    const amount = unitPrice * qty; // ← computed on the server, never trusted from the browser
     let createdOrderId;
 
     try {
         const { data: newOrder, error: dbError } = await supabase.from('orders').insert({
             payerName, payerEmail, payerPhone, amount, quantity: qty,
             packageTier: tier,
+            ...(ticketItems ? { ticketItems } : {}),
             dietaryPreference: clean(body.dietaryPreference || 'None', 30),
             clubName: clean(body.clubName || 'N/A', 100),
             eventName: config.title,
@@ -1005,7 +1059,7 @@ app.post('/api/check-in', requireScanner, async (req, res) => {
 
         const info = {
             name: orderDoc.payerName,
-            tier: tierLabel(orderDoc.packageTier),
+            tier: itemsSummary(orderDoc.ticketItems) || tierLabel(orderDoc.packageTier),
             qty: Number(orderDoc.quantity) || 1,
             club: orderDoc.clubName,
             position: orderDoc.position || '',
@@ -1093,7 +1147,8 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
             if (d.status === 'PAID') {
                 totalTickets += qty;
                 totalRevenue += Number(d.amount) || 0;
-                tierCounts[d.packageTier] = (tierCounts[d.packageTier] || 0) + qty;
+                if (Array.isArray(d.ticketItems) && d.ticketItems.length) d.ticketItems.forEach(i => { tierCounts[i.tier] = (tierCounts[i.tier] || 0) + (Number(i.qty) || 0); });
+                else tierCounts[d.packageTier] = (tierCounts[d.packageTier] || 0) + qty;
                 if (d.packageTier === 'LIONS') lionsCount += qty;
                 if (d.packageTier === 'LEOS') leosCount += qty;
                 if (d.paymentMethod === 'INVITE') invitedCount += qty;
@@ -1107,6 +1162,8 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
                 phone: d.payerPhone || 'N/A',
                 email: d.payerEmail || 'N/A',
                 tier: d.packageTier || 'N/A',
+                ticketItems: Array.isArray(d.ticketItems) ? d.ticketItems : null,
+                ticketSummary: itemsSummary(d.ticketItems),
                 paymentMethod: d.paymentMethod || 'N/A',
                 position: d.position || 'N/A',
                 clubName: d.clubName || 'N/A',
