@@ -60,7 +60,7 @@ const EVENT_CONFIGS = {
             calEnd: '20261127T193000Z'      // 10:30 PM Nairobi time (adjust if the dinner ends at a different time)
         },
         clientKeyEnv: 'CLIENT_KEY',          // organisers' read-only code (Lions District 411A)
-        tiers: { GENERAL: 1800 },
+        tiers: { GENERAL: 1000 },
         maxQty: 10,
         invite: {
             codeEnv: 'MASS_INDUCTION_INVITE_CODE',                       // set this in Render
@@ -216,9 +216,12 @@ io.use((socket, next) => {
     next(new Error('UNAUTHORIZED'));
 });
 
-// QR holds only the ticket ID (short = scans fast, no personal data inside)
+// The QR holds a link to the ticket's verification page, e.g. https://…/v/<ticket id>.
+// A phone camera opens the page (guest name, event, status); the door kiosk reads the ID out of the link.
+// No personal data is inside the code itself.
+const verifyUrl = (orderId) => `${PUBLIC_BASE_URL}/v/${orderId}`;
 function qrUrl(orderId, config, size = 300) {
-    const payload = JSON.stringify({ ticketID: orderId });
+    const payload = verifyUrl(orderId);
     const color = config.primaryColor.replace('#', '');
     return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(payload)}&color=${color}`;
 }
@@ -592,6 +595,76 @@ app.get('/api/ticket/:orderId', async (req, res) => {
         res.status(500).send('Error loading ticket.');
     }
 });
+
+// ─── TICKET VERIFICATION PAGE (opened by scanning the QR with any phone camera) ───
+// Shows who the ticket belongs to, the event, and whether it is valid or already used.
+// No phone numbers, emails or payment details.
+function buildVerifyPage(order, orderId, config) {
+    const d = eventDetails(config);
+    const tz = { timeZone: 'Africa/Nairobi' };
+    const inTime = order.checkInTime ? new Date(order.checkInTime).toLocaleString('en-GB', { ...tz, hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) : '';
+    let state, title, note;
+    if (order.status === 'PAID' && order.attended) { state = 'used'; title = 'Already checked in'; note = inTime ? `This ticket was scanned at the entrance on ${esc(inTime)}.` : 'This ticket has already been used at the entrance.'; }
+    else if (order.status === 'PAID') { state = 'ok'; title = 'Valid ticket'; note = 'This entry pass is confirmed. Show it at the entrance to be checked in.'; }
+    else if (order.status === 'PENDING_APPROVAL') { state = 'wait'; title = 'Awaiting approval'; note = 'This invitation has not been confirmed by the organisers yet.'; }
+    else { state = 'bad'; title = 'Not a valid ticket'; note = 'This booking was not completed or has been cancelled. It cannot be used for entry.'; }
+    const colours = { ok: ['#0E9F6E', '#E6F6EF', '&#10003;'], used: ['#B87500', '#FFF4DE', '!'], wait: ['#12317A', '#E8EEFC', '&#8230;'], bad: ['#D92D5B', '#FDEBF0', '&#10005;'] }[state];
+    const qty = Number(order.quantity) || 1;
+    const ticket = state === 'bad' ? '' : esc(ticketBadge(order));
+    const club = order.clubName && order.clubName !== 'N/A' ? esc(order.clubName) : '';
+    const position = order.position ? esc(order.position) : '';
+    const row = (k, v) => v ? `<div class="row"><span>${k}</span><b>${v}</b></div>` : '';
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>${esc(title)} | ${esc(d.name)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;background:#EDF0F6;color:#0F1B33;min-height:100vh;padding:20px 14px 40px}
+.card{max-width:440px;margin:0 auto;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 30px 60px -30px rgba(6,20,51,.45)}
+.top{background:radial-gradient(120% 140% at 0% 0%,#12317A,#0A1F4F 50%,#061433);color:#fff;padding:22px 24px 26px;position:relative}
+.brand{display:flex;align-items:center;gap:10px;font:700 13px Georgia,serif;letter-spacing:3px;color:#F2A900}
+.brand i{width:30px;height:30px;border-radius:50%;background:#0A1F4F;box-shadow:inset 0 0 0 2px #F2A900;display:grid;place-items:center;font-style:normal;font-size:14px}
+.ev{margin-top:18px;font:700 26px/1.15 Georgia,serif}.ev small{display:block;color:#F2A900;font:700 12px Arial,sans-serif;letter-spacing:4px;margin-top:8px}
+.meta{margin-top:12px;color:#C7D3EE;font-size:14px;line-height:1.6}
+.status{display:flex;gap:14px;align-items:center;padding:18px 24px;background:${colours[1]};color:${colours[0]}}
+.status .ic{width:46px;height:46px;border-radius:50%;background:${colours[0]};color:#fff;display:grid;place-items:center;font-size:22px;font-weight:800;flex-shrink:0}
+.status b{display:block;font-size:19px}.status span{display:block;font-size:13.5px;margin-top:3px;color:#3E4A63;line-height:1.45}
+.who{padding:22px 24px 6px}.who p{font-size:12px;letter-spacing:2px;color:#8C96AB;font-weight:700}.who h1{font:700 28px/1.2 Georgia,serif;margin-top:6px;word-break:break-word}
+.rows{padding:6px 24px 8px}.row{display:flex;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid #EEF1F6;font-size:14.5px}.row:last-child{border-bottom:0}
+.row span{color:#5E6A84}.row b{text-align:right}
+.foot{padding:16px 24px 22px}.btn{display:block;text-align:center;padding:14px;border-radius:14px;background:#0A1F4F;color:#fff;text-decoration:none;font-weight:700}
+.ref{text-align:center;color:#8C96AB;font-size:12px;margin-top:14px}
+</style></head><body><div class="card">
+<div class="top"><div class="brand"><i>S</i>SARAMI EVENTS</div>
+<div class="ev">${esc(d.name)}${d.year ? `<small>${esc(String(d.year).toUpperCase())}</small>` : ''}</div>
+<div class="meta">${esc(d.date)}${d.time ? ' · ' + esc(d.time) : ''}<br>${esc(d.venue)}${d.area ? ', ' + esc(d.area) : ''}</div></div>
+<div class="status"><span class="ic">${colours[2]}</span><div><b>${esc(title)}</b><span>${note}</span></div></div>
+<div class="who"><p>TICKET HOLDER</p><h1>${esc(order.payerName || 'Guest')}</h1></div>
+<div class="rows">${row('Ticket', ticket)}${state === 'bad' ? '' : row('Admits', `${qty} guest${qty === 1 ? '' : 's'}`)}${row('Position', position)}${row('Club', club)}</div>
+<div class="foot">${order.status === 'PAID' ? `<a class="btn" href="${PUBLIC_BASE_URL}/api/ticket/${orderId}">Open full entry pass</a>` : ''}
+<p class="ref">Ticket ref ${esc(String(orderId).slice(0, 8).toUpperCase())} · Verified by Sarami Events</p></div>
+</div></body></html>`;
+}
+
+async function sendVerifyPage(req, res) {
+    res.set('Cache-Control', 'no-store');
+    try {
+        if (!isUuid(req.params.orderId)) return res.status(404).send(buildNotFoundPage());
+        const { data: order, error } = await supabase.from('orders').select('*').eq('id', req.params.orderId).single();
+        if (error || !order) return res.status(404).send(buildNotFoundPage());
+        res.send(buildVerifyPage(order, req.params.orderId, getEventConfig(order.eventId)));
+    } catch (e) {
+        console.error('[VERIFY ERROR]', e.message);
+        res.status(500).send('Could not check this ticket right now. Please try again.');
+    }
+}
+function buildNotFoundPage() {
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Ticket not found</title>
+<style>body{font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;background:#EDF0F6;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
+.c{max-width:400px;background:#fff;border-radius:22px;padding:30px;text-align:center}.i{width:56px;height:56px;border-radius:50%;background:#D92D5B;color:#fff;display:grid;place-items:center;margin:0 auto 14px;font-size:26px;font-weight:800}
+h1{font:700 22px Georgia,serif;margin:0 0 8px;color:#0F1B33}p{color:#5E6A84;margin:0;line-height:1.5}</style></head>
+<body><div class="c"><div class="i">&#10005;</div><h1>Ticket not found</h1><p>This code is not a Sarami Events ticket. If you think this is a mistake, contact the organisers.</p></div></body></html>`;
+}
+app.get('/v/:orderId', sendVerifyPage);
+app.get('/verify/:orderId', sendVerifyPage);
 
 // ─── CREATE ORDER (PAID TICKETS, STK PUSH) ───
 app.post('/api/create-order', async (req, res) => {
