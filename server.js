@@ -92,7 +92,7 @@ const EVENT_CONFIGS = {
         },
         // One booking can mix these. Prices are set here on the server only.
         clientKeyEnv: 'SAMIA_CLIENT_KEY',    // organisers' read-only code (5th Wheel Conservatoire)
-        tiers: { CHILDREN: 1, REGULAR: 5, VIP: 10 },
+        tiers: { CHILDREN: 200, REGULAR: 500, VIP: 1000 },
         maxQty: 20
     },
     'DG_BANQUET_2026': {
