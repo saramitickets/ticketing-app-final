@@ -60,7 +60,9 @@ const EVENT_CONFIGS = {
             calEnd: '20261127T193000Z'      // 10:30 PM Nairobi time (adjust if the dinner ends at a different time)
         },
         clientKeyEnv: 'CLIENT_KEY',          // organisers' read-only code (Lions District 411A)
-        tiers: { GENERAL: 1000 },
+        showDiet: true,                      // dinner: organisers need meal counts
+        // One booking can mix these (a Lion bringing guests). Prices are set here only.
+        tiers: { LIONS: 1000, GUEST: 2500 },
         maxQty: 10,
         invite: {
             codeEnv: 'MASS_INDUCTION_INVITE_CODE',                       // set this in Render
@@ -121,7 +123,7 @@ const EVENT_CONFIGS = {
     }
 };
 
-const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lions', LEOS: 'Leos', CHILDREN: 'Children', REGULAR: 'Regular', VIP: 'VIP', MIXED: 'Mixed' };
+const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lion Member', GUEST: 'Non-Lion Guest', LEOS: 'Leos', CHILDREN: 'Children', REGULAR: 'Regular', VIP: 'VIP', MIXED: 'Mixed' };
 
 // "2 × VIP · 3 × Children" for bookings that mix ticket types
 function itemsSummary(items) {
@@ -1290,6 +1292,7 @@ function publicEventInfo(eventId) {
         id: eventId, name: d.name, year: d.year || '', kicker: d.kicker || 'Sarami Events presents',
         date: d.date, time: d.time, venue: d.venue, area: d.area || '', start: d.start || null,
         hasInvites: !!c.invite,
+        showDiet: !!c.showDiet,
         tiers: Object.keys(c.tiers || {}).map(t => ({ code: t, label: tierLabel(t), price: c.tiers[t] }))
     };
 }
