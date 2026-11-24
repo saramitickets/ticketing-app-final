@@ -752,7 +752,8 @@ app.post('/api/create-order', async (req, res) => {
             merchantId: "139",
             transactionTypeId: 1,
             payerAccount: payerPhone,
-            narration: `Event: ${payerName}`.slice(0, 40),
+            // plain letters, numbers and spaces only: symbols such as & are rejected by the bank
+            narration: `Event ${String(payerName).replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim()}`.slice(0, 40),
             callbackURL: `${PUBLIC_BASE_URL}/api/payment-callback/${CALLBACK_SECRET}`,
             ptyId: 1,
             promptDisplayAccount: "Sarami Events"
