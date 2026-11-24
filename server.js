@@ -737,7 +737,12 @@ app.post('/api/create-order', async (req, res) => {
         if (dbError) throw dbError;
         createdOrderId = newOrder.id;
 
-        const token = await getAuthToken();
+        // Two steps, logged separately so a failure says exactly which one DTB refused
+        let token;
+        try { token = await getAuthToken(); }
+        catch (e) { e.stkStep = 'LOGIN (partner/login)'; throw e; }
+        if (!token) { const e = new Error('Login succeeded but no access_token was returned'); e.stkStep = 'LOGIN (partner/login)'; throw e; }
+        console.log('[STK] login OK, requesting STK push for order', createdOrderId);
         const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
 
         await axios.post(process.env.INFINITIPAY_STKPUSH_URL, {
@@ -751,13 +756,19 @@ app.post('/api/create-order', async (req, res) => {
             callbackURL: `${PUBLIC_BASE_URL}/api/payment-callback/${CALLBACK_SECRET}`,
             ptyId: 1,
             promptDisplayAccount: "Sarami Events"
-        }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
+        }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }).catch(e => { e.stkStep = 'STK PUSH (payment request)'; throw e; });
 
         await setOrder(createdOrderId, { merchantRequestID: merchantTxId, status: 'STK_SENT' });
         res.status(200).json({ success: true, orderId: createdOrderId });
     } catch (err) {
-        const errMsg = err.response?.data || err.message || 'Unknown error';
-        console.error('[CREATE-ORDER ERROR]', typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
+        const body = err.response?.data || err.message || 'Unknown error';
+        const errMsg = {
+            step: err.stkStep || 'BEFORE PAYMENT',
+            httpStatus: err.response?.status || null,
+            at: new Date().toISOString(),
+            response: body
+        };
+        console.error('[CREATE-ORDER ERROR]', JSON.stringify(errMsg));
         if (createdOrderId) await setOrder(createdOrderId, { status: 'FAILED', reason: errMsg });
         res.status(502).json({ success: false, error: 'STK_FAILED' });
     }
