@@ -743,21 +743,37 @@ app.post('/api/create-order', async (req, res) => {
         catch (e) { e.stkStep = 'LOGIN (partner/login)'; throw e; }
         if (!token) { const e = new Error('Login succeeded but no access_token was returned'); e.stkStep = 'LOGIN (partner/login)'; throw e; }
         console.log('[STK] login OK, requesting STK push for order', createdOrderId);
-        const merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
-
-        await axios.post(process.env.INFINITIPAY_STKPUSH_URL, {
-            transactionId: merchantTxId,
-            transactionReference: createdOrderId,
-            amount,
-            merchantId: "139",
-            transactionTypeId: 1,
-            payerAccount: payerPhone,
-            // plain letters, numbers and spaces only: symbols such as & are rejected by the bank
-            narration: `Event ${String(payerName).replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim()}`.slice(0, 40),
-            callbackURL: `${PUBLIC_BASE_URL}/api/payment-callback/${CALLBACK_SECRET}`,
-            ptyId: 1,
-            promptDisplayAccount: "Sarami Events"
-        }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }).catch(e => { e.stkStep = 'STK PUSH (payment request)'; throw e; });
+        // DTB sometimes briefly fails to connect to Safaricom ("Failed to get token").
+        // No prompt is sent in that case, so it is safe to try again, up to 3 attempts in total.
+        const isTokenHiccup = (e) => /failed to get token/i.test(JSON.stringify(e.response?.data || ''));
+        const narration = `Event ${String(payerName).replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim()}`.slice(0, 40);   // plain characters only: symbols such as & are rejected
+        let merchantTxId;
+        for (let attempt = 1; ; attempt++) {
+            merchantTxId = `TXN-${crypto.randomBytes(4).toString('hex')}`;
+            try {
+                await axios.post(process.env.INFINITIPAY_STKPUSH_URL, {
+                    transactionId: merchantTxId,
+                    transactionReference: createdOrderId,
+                    amount,
+                    merchantId: "139",
+                    transactionTypeId: 1,
+                    payerAccount: payerPhone,
+                    narration,
+                    callbackURL: `${PUBLIC_BASE_URL}/api/payment-callback/${CALLBACK_SECRET}`,
+                    ptyId: 1,
+                    promptDisplayAccount: "Sarami Events"
+                }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
+                break;
+            } catch (e) {
+                if (attempt < 3 && isTokenHiccup(e)) {
+                    console.warn(`[STK] "Failed to get token" on attempt ${attempt}, retrying for order`, createdOrderId);
+                    await new Promise(r => setTimeout(r, 1500 * attempt));
+                    continue;
+                }
+                e.stkStep = attempt > 1 ? `STK PUSH (payment request, after ${attempt} attempts)` : 'STK PUSH (payment request)';
+                throw e;
+            }
+        }
 
         await setOrder(createdOrderId, { merchantRequestID: merchantTxId, status: 'STK_SENT' });
         res.status(200).json({ success: true, orderId: createdOrderId });
