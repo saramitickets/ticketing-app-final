@@ -1290,6 +1290,16 @@ app.get('/api/guest-list', requireScanner, async (req, res) => {
 });
 
 // ─── MANUAL ATTENDANCE TOGGLE (ADMIN) ───
+// ─── "MAYBE ATTENDING" (ADMIN) ───
+// The ticket stays valid; the guest is just left out of confirmed totals until they arrive.
+app.post('/api/set-tentative/:id', requireAdmin, async (req, res) => {
+    if (!isUuid(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+    const tentative = !!(req.body && req.body.tentative);
+    const { error } = await supabase.from('orders').update({ tentative, updatedAt: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) { console.error('[TENTATIVE ERROR]', error.message); return res.status(500).json({ success: false, error: 'Could not save. Has the "tentative" column been added in Supabase?' }); }
+    res.json({ success: true, tentative });
+});
+
 app.post('/api/toggle-attendance/:id', requireAdmin, async (req, res) => {
     try {
         const { data: orderDoc, error } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
@@ -1355,6 +1365,7 @@ app.get('/api/live-stats', requireAdmin, async (req, res) => {
                 mpesaReceipt: d.mpesaReceipt || 'N/A',
                 merchantTxId: d.merchantRequestID || 'N/A',
                 attended: d.attended || false,
+                tentative: !!d.tentative,
                 checkInTime: d.checkInTime ? new Date(d.checkInTime) : null
             });
         });
@@ -1400,7 +1411,7 @@ app.get('/api/client-registry', async (req, res) => {
     if (!eventId) return res.status(401).json({ success: false, message: 'Wrong access code.' });
     try {
         const { data, error } = await supabase.from('orders')
-            .select('id, payerName, clubName, position, packageTier, ticketItems, paymentMethod, quantity, amount, dietaryPreference, attended, checkInTime, createdAt, updatedAt')
+            .select('id, payerName, clubName, position, packageTier, ticketItems, paymentMethod, quantity, amount, dietaryPreference, attended, checkInTime, tentative, createdAt, updatedAt')
             .eq('eventId', eventId).eq('status', 'PAID')
             .order('createdAt', { ascending: false });
         if (error) throw error;
@@ -1420,6 +1431,7 @@ app.get('/api/client-registry', async (req, res) => {
                     position: g.position || '',
                     kind,
                     doorList: g.paymentMethod === 'DOOR_LIST',
+                    tentative: !!g.tentative && !g.attended,
                     ticket: itemsSummary(g.ticketItems) || tierLabel(g.packageTier),
                     items,
                     qty: Number(g.quantity) || 1,
