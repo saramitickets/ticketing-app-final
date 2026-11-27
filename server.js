@@ -1030,6 +1030,48 @@ app.delete('/api/invite-list/:id', requireAdmin, async (req, res) => {
 });
 
 // ─── MANUAL TICKET CREATION (ADMIN ONLY) ───
+// ─── DOOR LIST (ADMIN): invited guests checked in by name, no email or QR is sent ───
+// Body: { eventId, guests: [{ name, club, position, seats, phone }] }
+app.post('/api/door-list', requireAdmin, async (req, res) => {
+    const b = req.body || {};
+    if (!findEvent(b.eventId)) return res.status(400).json({ success: false, error: 'Unknown event.' });
+    const config = getEventConfig(b.eventId);
+    const list = Array.isArray(b.guests) ? b.guests.slice(0, 600) : [];
+    const rows = list.map(g => ({
+        name: clean(g?.name, 80),
+        club: clean(g?.club || '', 100),
+        position: cleanPosition(g?.position) || clean(g?.position || '', 60) || null,   // any position text is fine here
+        seats: Math.min(10, Math.max(1, parseInt(g?.seats, 10) || 1)),
+        phone: formatPhone(g?.phone) || 'N/A'
+    })).filter(g => g.name.length >= 2);
+    if (!rows.length) return res.status(400).json({ success: false, error: 'No names to add.' });
+    try {
+        // Skip names already on this event's door list, so importing twice doesn't duplicate anyone
+        const { data: existing, error: e1 } = await supabase.from('orders').select('payerName')
+            .eq('eventId', b.eventId).eq('paymentMethod', 'DOOR_LIST');
+        if (e1) throw e1;
+        const have = new Set((existing || []).map(o => String(o.payerName || '').trim().toLowerCase()));
+        const fresh = [];
+        rows.forEach(g => { const k = g.name.toLowerCase(); if (!have.has(k)) { have.add(k); fresh.push(g); } });
+        if (fresh.length) {
+            const now = new Date().toISOString();
+            const { error } = await supabase.from('orders').insert(fresh.map(g => ({
+                payerName: g.name, payerEmail: 'N/A', payerPhone: g.phone,
+                amount: 0, quantity: g.seats, packageTier: 'INVITED', position: g.position,
+                dietaryPreference: 'None', clubName: g.club || 'N/A',
+                eventName: config.title, eventId: b.eventId,
+                status: 'PAID', paymentMethod: 'DOOR_LIST', mpesaReceipt: 'N/A',
+                emailStatus: 'NOT_SENT', attended: false, createdAt: now, updatedAt: now
+            })));
+            if (error) throw error;
+        }
+        res.json({ success: true, added: fresh.length, skipped: rows.length - fresh.length });
+    } catch (err) {
+        console.error('[DOOR LIST ERROR]', err.message);
+        res.status(500).json({ success: false, error: 'Could not save the door list.' });
+    }
+});
+
 app.post('/api/manual-order', requireAdmin, async (req, res) => {
     const b = req.body || {};
     if (!b.payerName || !b.payerEmail) return res.status(400).json({ success: false, error: 'Name and Email are required' });
