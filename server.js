@@ -1419,6 +1419,7 @@ app.get('/api/client-registry', async (req, res) => {
                     club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
                     position: g.position || '',
                     kind,
+                    doorList: g.paymentMethod === 'DOOR_LIST',
                     ticket: itemsSummary(g.ticketItems) || tierLabel(g.packageTier),
                     items,
                     qty: Number(g.quantity) || 1,
