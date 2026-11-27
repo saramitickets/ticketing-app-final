@@ -63,6 +63,9 @@ const EVENT_CONFIGS = {
         showDiet: true,                      // dinner: organisers need meal counts
         // One booking can mix these (a Lion bringing guests). Prices are set here only.
         tiers: { LIONS: 1000, GUEST: 2500 },
+        // From this moment (Nairobi time) the early prices end and everyone pays one price.
+        // Change the time in Render with MASS_PRICE_CHANGE_AT if needed, e.g. 2026-11-27T12:00:00+03:00
+        priceChange: { at: process.env.MASS_PRICE_CHANGE_AT || '2026-11-27T12:00:00+03:00', tiers: { LATE: 1500 } },
         maxQty: 10,
         invite: {
             codeEnv: 'MASS_INDUCTION_INVITE_CODE',                       // set this in Render
@@ -123,7 +126,15 @@ const EVENT_CONFIGS = {
     }
 };
 
-const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lion Member', GUEST: 'Non-Lion Guest', LEOS: 'Leos', CHILDREN: 'Children', REGULAR: 'Regular', VIP: 'VIP', MIXED: 'Mixed' };
+const TIER_LABELS = { GENERAL: 'General', INVITED: 'Invited Guest', COMPLIMENTARY: 'Complimentary', LIONS: 'Lion Member', GUEST: 'Non-Lion Guest', LATE: 'General Admission', LEOS: 'Leos', CHILDREN: 'Children', REGULAR: 'Regular', VIP: 'VIP', MIXED: 'Mixed' };
+
+// The ticket prices that apply right now (early prices switch to one price at a set time)
+function currentTiers(config) {
+    const pc = config.priceChange;
+    if (pc && pc.at && Date.now() >= Date.parse(pc.at)) return pc.tiers;
+    return config.tiers || {};
+}
+const earlyPricesEnded = (config) => !!(config.priceChange && Date.now() >= Date.parse(config.priceChange.at));
 
 // "2 × VIP · 3 × Children" for bookings that mix ticket types
 function itemsSummary(items) {
@@ -668,6 +679,22 @@ h1{font:700 22px Georgia,serif;margin:0 0 8px;color:#0F1B33}p{color:#5E6A84;marg
 app.get('/v/:orderId', sendVerifyPage);
 app.get('/verify/:orderId', sendVerifyPage);
 
+// ─── CURRENT PRICES (the booking page reads these, so it always matches what is charged) ───
+app.get('/api/pricing/:eventId', (req, res) => {
+    const config = findEvent(req.params.eventId);
+    if (!config) return res.status(404).json({ success: false });
+    const tiers = currentTiers(config);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+        success: true,
+        serverTime: new Date().toISOString(),
+        earlyEnded: earlyPricesEnded(config),
+        priceChangeAt: config.priceChange?.at || null,
+        tiers: Object.keys(tiers).map(t => ({ code: t, label: tierLabel(t), price: tiers[t] })),
+        laterTiers: config.priceChange && !earlyPricesEnded(config) ? Object.keys(config.priceChange.tiers).map(t => ({ code: t, label: tierLabel(t), price: config.priceChange.tiers[t] })) : []
+    });
+});
+
 // ─── CREATE ORDER (PAID TICKETS, STK PUSH) ───
 app.post('/api/create-order', async (req, res) => {
     if (MAINTENANCE_MODE) return res.status(503).json({ success: false, error: 'MAINTENANCE_MODE_ACTIVE' });
@@ -681,6 +708,7 @@ app.post('/api/create-order', async (req, res) => {
     if (!config) return res.status(400).json({ success: false, error: 'Unknown event.' });
 
     const maxQty = config.maxQty || 10;
+    const tiersNow = currentTiers(config);   // prices that apply at this moment
     let tier, qty, amount, ticketItems = null;
 
     if (Array.isArray(body.items)) {
@@ -691,17 +719,17 @@ app.post('/api/create-order', async (req, res) => {
             const q = parseInt(it?.qty, 10);
             if (!Number.isInteger(q) || q < 0 || q > maxQty) return res.status(400).json({ success: false, error: 'Invalid ticket quantity.' });
             if (q === 0) continue;
-            if (!config.tiers?.[t]) return res.status(400).json({ success: false, error: 'This ticket type is not available.' });
+            if (!tiersNow[t]) return res.status(400).json({ success: false, error: earlyPricesEnded(config) && config.tiers?.[t] ? 'EARLY_PRICES_ENDED' : 'This ticket type is not available.' });
             merged[t] = (merged[t] || 0) + q;
         }
-        ticketItems = Object.keys(config.tiers).filter(t => merged[t]).map(t => ({ tier: t, qty: merged[t], unitPrice: config.tiers[t] }));
+        ticketItems = Object.keys(tiersNow).filter(t => merged[t]).map(t => ({ tier: t, qty: merged[t], unitPrice: tiersNow[t] }));
         qty = ticketItems.reduce((n, i) => n + i.qty, 0);
         if (qty < 1 || qty > maxQty) return res.status(400).json({ success: false, error: `You can book between 1 and ${maxQty} tickets at a time.` });
         amount = ticketItems.reduce((n, i) => n + i.qty * i.unitPrice, 0);   // ← computed on the server only
         tier = ticketItems.length === 1 ? ticketItems[0].tier : 'MIXED';
     } else {
         tier = clean(body.packageTier || 'GENERAL', 20).toUpperCase();
-        const unitPrice = config.tiers?.[tier];
+        const unitPrice = tiersNow[tier];
         if (!unitPrice) return res.status(400).json({ success: false, error: 'This ticket type is not available.' });
         qty = parseInt(body.quantity, 10);
         if (!Number.isInteger(qty) || qty < 1 || qty > maxQty) {
@@ -1321,7 +1349,7 @@ function publicEventInfo(eventId) {
         date: d.date, time: d.time, venue: d.venue, area: d.area || '', start: d.start || null,
         hasInvites: !!c.invite,
         showDiet: !!c.showDiet,
-        tiers: Object.keys(c.tiers || {}).map(t => ({ code: t, label: tierLabel(t), price: c.tiers[t] }))
+        tiers: Object.entries({ ...(c.tiers || {}), ...(c.priceChange?.tiers || {}) }).map(([t, p]) => ({ code: t, label: tierLabel(t), price: p }))
     };
 }
 
