@@ -1273,11 +1273,12 @@ app.get('/api/guest-list', requireScanner, async (req, res) => {
             guests: data.map(g => ({
                 id: g.id,
                 name: g.payerName || 'Guest',
-                phoneLast4: String(g.payerPhone || '').slice(-4),
+                phoneLast4: /\d{4}$/.test(String(g.payerPhone || '')) ? String(g.payerPhone).slice(-4) : '',
                 club: g.clubName && g.clubName !== 'N/A' ? g.clubName : '',
                 position: g.position || '',
                 qty: Number(g.quantity) || 1,
                 tier: tierLabel(g.packageTier),
+                doorList: g.paymentMethod === 'DOOR_LIST',
                 invited: g.paymentMethod === 'INVITE',
                 attended: !!g.attended,
                 checkInTime: g.checkInTime
